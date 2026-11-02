@@ -1,0 +1,11 @@
+# Laptop stack (Python 3.10). torch should be installed first from pytorch.org for your CUDA version.
+numpy>=2,<2.3
+scipy
+torch>=2.5
+transformers>=4.56,<5
+peft>=0.17
+huggingface_hub>=0.34,<0.36
+soundfile
+piper-tts>=1.3
+vosk
+silero-vad>=5.1

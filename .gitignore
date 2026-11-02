@@ -1,0 +1,12 @@
+# speech models are downloaded by scripts/download_models.sh (hundreds of MB, over GitHub's file limit)
+voices/
+stt/
+# python / editor
+__pycache__/
+*.pyc
+.venv/
+# runtime output
+*.log
+transcript*.txt
+dump/
+.live_arabic_16k.wav
