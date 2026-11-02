@@ -1,0 +1,4 @@
+{"time": "2026-11-02 17:03", "results": {"whisper": {"WER": 46.05, "CER": 22.37, "clips": 846, "hours": 1.025, "seconds": 534.7, "rtf": 0.145, "breakdowns": 4}, "whisper-adapter": {"WER": 45.91, "CER": 21.94, "clips": 846, "hours": 1.025, "seconds": 557.4, "rtf": 0.151, "breakdowns": 3}}}
+{"time": "2026-11-02 17:40", "results": {"cohere-greedy": {"WER": 28.32, "CER": 13.22, "clips": 846, "hours": 1.025, "seconds": 77.1, "rtf": 0.021, "breakdowns": 8}}}
+{"time": "2026-11-02 17:42", "results": {"cohere-beam8": {"WER": 27.43, "CER": 13.0, "clips": 846, "hours": 1.025, "seconds": 118.6, "rtf": 0.032, "breakdowns": 1}}}
+{"time": "2026-11-02 17:44", "results": {"cohere-sygma": {"WER": 26.95, "CER": 11.99, "clips": 846, "hours": 1.025, "seconds": 120.5, "rtf": 0.033, "breakdowns": 0}}}

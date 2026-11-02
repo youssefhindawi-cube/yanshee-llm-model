@@ -9,3 +9,9 @@ soundfile
 piper-tts>=1.3
 vosk
 silero-vad>=5.1
+# Cohere model + Sygma decoding (asr/sygma) and the benchmark harness
+librosa>=0.11
+numba>=0.61
+sentencepiece
+coverage>=7
+pyarrow

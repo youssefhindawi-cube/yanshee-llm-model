@@ -14,6 +14,11 @@ built around it. Private: `Q_Brain_Brief_Yanshee.md` / `.pdf` contain an interna
 | `asr/denoise.py` | High-pass + spectral gate used before Whisper. |
 | `asr/test_arabic_whisper.py` | Batch comparison of Whisper large-v3 with and without the Arabic adapter on `asr/clips/`. |
 | `asr/clips/` | Short synthetic Arabic/English test sentences with reference text. |
+| `asr/eval_casablanca_egypt.py` | Egyptian-dialect benchmark: scores ASR systems on the Casablanca Egypt test set (846 clips, 1.02 h) with the Open Universal Arabic ASR Leaderboard normalisation. Systems: `whisper`, `whisper-adapter`, `cohere-greedy`, `cohere-beam8`, `cohere-sygma`, `cloud:<provider>`. |
+| `asr/sygma/` | Vendored Sygma decoding (Apache-2.0) and Cohere's model code for `CohereLabs/cohere-transcribe-arabic-07-2026` (gated: accept its terms on Hugging Face, then log in). |
+| `asr/cloud_asr.py` | Cloud speech-to-text adapters (OpenAI, ElevenLabs, Deepgram, Azure, Google) with keys from the environment or a git-ignored `.env`. |
+| `asr/elevenlabs_transcribe.py` | `python3 asr/elevenlabs_transcribe.py file.m4a` prints the ElevenLabs transcript of any audio file. |
+| `asr/results/casablanca_egypt/` | Per-clip predictions and summaries from the benchmark runs below. |
 | `scripts/download_models.sh` | Fetches the Piper voices and Vosk models that are not in git. |
 
 ## Setup (laptop)
@@ -35,6 +40,25 @@ python3 q_yanshee.py --ip 192.168.x.x       # drive a Yanshee over the network (
 python3 asr/live_arabic_web.py              # then open http://127.0.0.1:8765 and press Start
 python3 asr/live_arabic.py --wav clip.m4a   # transcribe a recording through the live pipeline
 python3 asr/test_arabic_whisper.py asr/clips cuda
+```
+
+## Egyptian-dialect benchmark (Casablanca / Egypt / test, 846 clips, 1.02 h)
+
+| System | WER | CER | Time on an RTX 4060 | Breakdowns |
+|---|---|---|---|---|
+| Cohere transcribe-arabic + Sygma decoding | **26.95%** | **11.99%** | 120 s | 0 |
+| Cohere transcribe-arabic, plain 8-beam | 27.43% | 13.00% | 119 s | 1 |
+| Cohere transcribe-arabic, greedy | 28.32% | 13.22% | 77 s | 8 |
+| Whisper-large-v3 + Egyptian LoRA adapter | 45.91% | 21.94% | 557 s | 3 |
+| Whisper-large-v3 | 46.05% | 22.37% | 535 s | 4 |
+
+ElevenLabs Scribe on the first 3 clips only (free-plan quota): WER 25.8%, CER 14.6%, versus 35.5% / 30.0% for
+Cohere + Sygma on the same 3 clips. Run the Cohere variants in separate processes: two loaded models exceed 8 GB.
+
+```bash
+python3 asr/eval_casablanca_egypt.py --systems whisper
+python3 asr/eval_casablanca_egypt.py --systems cohere-sygma
+python3 asr/eval_casablanca_egypt.py --systems cloud:elevenlabs --limit 3   # cloud runs are cached per clip
 ```
 
 ## Notes
