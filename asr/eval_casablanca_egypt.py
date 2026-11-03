@@ -169,8 +169,20 @@ def run_cloud(rows, provider, workers=4):
     todo = [r for r in rows if r["seg_id"] not in cache]
     print("   %d cached, %d to send" % (len(rows) - len(todo), len(todo)), flush=True)
     errors = 0
+    def robust(audio):
+        """Retry a clip on transient trouble (network drops, 429/5xx, time-outs) before giving up on it."""
+        for attempt in range(4):
+            try:
+                return fn(audio)
+            except Exception as e:
+                msg = str(e)
+                transient = any(k in msg for k in ("HTTP 429", "HTTP 5", "timed out", "Network is unreachable", "EOF occurred",
+                                                   "Remote end closed", "Connection reset", "Temporary failure", "urlopen error"))
+                if attempt == 3 or not transient:
+                    raise
+                time.sleep(5 * (attempt + 1) ** 2)       # 5, 20, 45 s
     with io.open(cache_path, "a", encoding="utf-8") as f, cf.ThreadPoolExecutor(workers) as ex:
-        futs = {ex.submit(fn, (decode(r) * 32767).astype(np.int16)): r for r in todo}
+        futs = {ex.submit(robust, (decode(r) * 32767).astype(np.int16)): r for r in todo}
         for i, fut in enumerate(cf.as_completed(futs), 1):
             r = futs[fut]
             try:
@@ -179,7 +191,7 @@ def run_cloud(rows, provider, workers=4):
                 errors += 1
                 if errors <= 3:
                     print("   error on %s: %s" % (r["seg_id"], str(e)[:200]), flush=True)
-                if errors >= 10:
+                if errors >= 10 and errors > len(todo) // 2:
                     raise RuntimeError("too many errors from %s, stopping (last: %s)" % (provider, str(e)[:120]))
                 continue
             cache[r["seg_id"]] = text

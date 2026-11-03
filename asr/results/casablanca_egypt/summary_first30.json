@@ -3,3 +3,5 @@
 {"time": "2026-11-03 13:06", "results": {"cloud:elevenlabs-v1": {"WER": 50.92, "CER": 24.65, "clips": 30, "hours": 0.025, "seconds": 13.1, "rtf": 0.144, "breakdowns": 0}}}
 {"time": "2026-11-03 13:56", "results": {"cloud:deepgram": {"WER": 57.8, "CER": 27.42, "clips": 30, "hours": 0.025, "seconds": 16.9, "rtf": 0.186, "breakdowns": 0}}}
 {"time": "2026-11-03 14:03", "results": {"cloud:munsit": {"WER": 41.28, "CER": 17.54, "clips": 30, "hours": 0.025, "seconds": 24.1, "rtf": 0.265, "breakdowns": 0}}}
+{"time": "2026-11-03 15:16", "results": {"cloud:speechmatics": {"WER": 63.3, "CER": 45.24, "clips": 30, "hours": 0.025, "seconds": 83.1, "rtf": 0.914, "breakdowns": 0}}}
+{"time": "2026-11-03 15:19", "results": {"cloud:speechmatics": {"WER": 45.41, "CER": 23.08, "clips": 30, "hours": 0.025, "seconds": 0.0, "rtf": 0.0, "breakdowns": 0}}}

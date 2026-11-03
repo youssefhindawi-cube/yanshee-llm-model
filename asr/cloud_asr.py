@@ -7,6 +7,8 @@ Credentials come from environment variables only (never from code or chat):
   azure       AZURE_SPEECH_KEY + AZURE_SPEECH_ENDPOINT (or AZURE_SPEECH_REGION)   locale ar-EG (Egyptian), profanity unmasked
   google      gcloud application-default login + GOOGLE_CLOUD_PROJECT   Speech-to-Text v2, chirp_2, locale ar-EG
   munsit      MUNSIT_API_KEY                       Munsit (CNTXT AI) model munsit, Arabic, dialect auto-detected
+  gemini      GEMINI_API_KEY (+ optional GEMINI_MODEL)   Google Gemini via AI Studio, verbatim-transcription prompt
+  speechmatics SPEECHMATICS_API_KEY                 batch API v2, language ar, operating point enhanced
 """
 import io
 import json
@@ -168,7 +170,75 @@ def munsit_transcribe(audio, model="munsit"):
     return data.get("transcription", "")
 
 
+_gemini_model = {}
+
+
+def gemini_transcribe(audio, model=None):
+    """Google Gemini (AI Studio key, GEMINI_API_KEY): a multimodal LLM asked to transcribe verbatim, not an ASR engine.
+    Model from GEMINI_MODEL (default gemini-3.5-flash with thinking off; 3.8-flash was overloaded on 2026-11-03; a retired name is replaced by the one Google's error suggests).
+    Free tier: rate-limited per minute and per day; the harness caches answers, so a rerun resumes where it stopped."""
+    import base64, time
+    key = _env("GEMINI_API_KEY")
+    model = model or os.environ.get("GEMINI_MODEL") or _gemini_model.get("name") or "gemini-3.5-flash"
+    prompt = ("Transcribe this Egyptian Arabic audio verbatim, exactly as spoken, in Arabic script. "
+              "Keep dialect words as pronounced. Do not translate, summarise, add punctuation beyond what is natural, "
+              "or add any commentary. Output only the transcript. If there is no speech, output nothing.")
+    body = json.dumps({"contents": [{"parts": [{"text": prompt}, {"inline_data": {"mime_type": "audio/wav", "data": base64.b64encode(wav_bytes(audio)).decode()}}]}],
+                       "generationConfig": {"temperature": 0, "maxOutputTokens": 512, "thinkingConfig": {"thinkingBudget": 0}}}).encode()   # thinking off: transcription needs none and it avoids time-outs
+    url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % model
+    for attempt in range(6):
+        try:
+            r = _post(url, body, {"Content-Type": "application/json", "x-goog-api-key": key}, timeout=120)
+            break
+        except RuntimeError as e:
+            msg = str(e)
+            if "HTTP 404" in msg and not _gemini_model.get("name"):   # retired model: Google's error names the replacement
+                import re as _re
+                m = _re.search(r"use models/([A-Za-z0-9.\-]+)", msg)
+                if not m:
+                    raise RuntimeError("Gemini model %s not available and no replacement suggested: %s" % (model, msg[:200]))
+                _gemini_model["name"] = m.group(1)
+                url = "https://generativelanguage.googleapis.com/v1beta/models/%s:generateContent" % _gemini_model["name"]
+                continue
+            if "HTTP 429" in msg or "HTTP 503" in msg:        # free-tier rate limit: wait and retry
+                time.sleep(15 * (attempt + 1))
+                continue
+            raise
+    else:
+        raise RuntimeError("Gemini: rate-limited repeatedly; rerun later, cached clips are kept")
+    try:
+        parts = r["candidates"][0]["content"]["parts"]
+        return " ".join(p.get("text", "") for p in parts).strip()
+    except (KeyError, IndexError):
+        return ""
+
+
+def speechmatics_transcribe(audio, language="ar", operating_point="enhanced"):
+    """Speechmatics batch API v2 (SPEECHMATICS_API_KEY, Bearer): submit a job, poll until done, fetch the plain-text transcript.
+    Arabic is one language code ('ar'); there is no Egyptian locale. Free plan: 240 min of batch audio per month."""
+    import time
+    key = _env("SPEECHMATICS_API_KEY")
+    base = os.environ.get("SPEECHMATICS_URL", "https://asr.api.speechmatics.com/v2")
+    config = json.dumps({"type": "transcription", "transcription_config": {"language": language, "operating_point": operating_point}})
+    body, ctype = _multipart({"config": config}, {"data_file": ("clip.wav", wav_bytes(audio), "audio/wav")})
+    job = _post(base + "/jobs", body, {"Authorization": "Bearer " + key, "Content-Type": ctype})
+    jid = job.get("id")
+    if not jid:
+        raise RuntimeError("Speechmatics did not return a job id: %s" % str(job)[:200])
+    for _ in range(120):                                   # poll up to ~4 min
+        time.sleep(2)
+        req = urllib.request.Request("%s/jobs/%s" % (base, jid), headers={"Authorization": "Bearer " + key})
+        st = json.loads(urllib.request.urlopen(req, timeout=60).read()).get("job", {})
+        if st.get("status") == "done":
+            req = urllib.request.Request("%s/jobs/%s/transcript?format=txt" % (base, jid), headers={"Authorization": "Bearer " + key})
+            return urllib.request.urlopen(req, timeout=60).read().decode("utf-8").strip()
+        if st.get("status") in ("rejected", "deleted", "expired"):
+            raise RuntimeError("Speechmatics job %s %s: %s" % (jid, st.get("status"), str(st.get("errors"))[:200]))
+    raise RuntimeError("Speechmatics job %s still running after 4 min" % jid)
+
+
 PROVIDERS = {"openai": openai_transcribe, "elevenlabs": elevenlabs_transcribe, "deepgram": deepgram_transcribe, "munsit": munsit_transcribe,
+             "gemini": gemini_transcribe, "speechmatics": speechmatics_transcribe,
              "azure": azure_transcribe, "google": google_transcribe,
              "elevenlabs-v3": lambda audio: elevenlabs_transcribe(audio, model="scribe_v3"),   # newer Scribe, accepted by the API (Nov 2026)
              "elevenlabs-v1": lambda audio: elevenlabs_transcribe(audio, model="scribe_v1")}

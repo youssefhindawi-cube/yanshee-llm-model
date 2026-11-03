@@ -181,6 +181,7 @@ counts as errors although they are spelling conventions.
 | System | Casablanca 30, strict | Casablanca 30, unified | fabhaus30, strict | fabhaus30, unified |
 |---|---|---|---|---|
 | Munsit | 37.2 | 36.3 | **25.4** | **25.4** |
+| Speechmatics (batch v2, `ar`, enhanced; free 240 min/month) | 40.9 | 37.7 | 29.2 | 26.4 |
 | ElevenLabs v2 | 47.0 | 44.7 | 29.2 | 29.2 |
 | ElevenLabs v1 | 46.0 | 43.7 | 29.5 | 29.5 |
 | Cohere + Sygma | 33.5 | 31.2 | 35.9 | 30.5 |
@@ -193,6 +194,12 @@ counts as errors although they are spelling conventions.
 
 Per-clip wins (strict): Casablanca — Cohere+Sygma 16, Cohere beam8 15, ElevenLabs v3 12, Munsit 9; fabhaus30 — Munsit 22,
 ElevenLabs v2 21, ElevenLabs v1 19, Whisper 17, Cohere+Sygma 11.
+
+Added 2026-11-03: **Speechmatics** (second-best cloud after Munsit on both sets; drops fillers and repeats and adds
+punctuation, so verbatim WER understates it; CER 11.4 on fabhaus30). **Gemini** (`gemini-3.5-flash`, thinking off,
+verbatim prompt; `gemini-2.5-flash` is retired for new keys and `gemini-3.8-flash` was overloaded) ran under a flaky
+phone-hotspot connection; its table rows are added once both sets are complete. Harness now retries clips on
+transient network errors. A full-846 Speechmatics run was started by mistake and stopped after ~11 extra clips.
 
 Reading:
 - **Cohere's accuracy is the same on both sets** (unified 31.2 → 30.5). A model trained on Casablanca would show an

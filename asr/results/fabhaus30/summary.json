@@ -8,3 +8,5 @@
 {"time": "2026-11-03 14:17", "results": {"cohere-sygma": {"WER": 35.93, "CER": 14.81, "clips": 30, "hours": 0.033, "seconds": 7.4, "rtf": 0.062, "breakdowns": 0}}}
 {"time": "2026-11-03 14:17", "results": {"cloud:deepgram": {"WER": 36.95, "CER": 20.52, "clips": 30, "hours": 0.033, "seconds": 32.8, "rtf": 0.275, "breakdowns": 0}}}
 {"time": "2026-11-03 14:18", "results": {"cloud:munsit": {"WER": 25.42, "CER": 10.54, "clips": 30, "hours": 0.033, "seconds": 35.3, "rtf": 0.296, "breakdowns": 0}}}
+{"time": "2026-11-03 15:18", "results": {"cloud:speechmatics": {"WER": 32.2, "CER": 16.12, "clips": 30, "hours": 0.033, "seconds": 78.2, "rtf": 0.656, "breakdowns": 0}}}
+{"time": "2026-11-03 15:18", "results": {"cloud:speechmatics": {"WER": 29.15, "CER": 11.91, "clips": 30, "hours": 0.033, "seconds": 19.0, "rtf": 0.159, "breakdowns": 0}}}
