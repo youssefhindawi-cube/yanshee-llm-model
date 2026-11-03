@@ -4,8 +4,9 @@ Credentials come from environment variables only (never from code or chat):
   openai      OPENAI_API_KEY                       model gpt-4o-transcribe, language ar
   elevenlabs  ELEVENLABS_API_KEY                   model scribe_v2 (falls back to scribe_v1), language ara
   deepgram    DEEPGRAM_API_KEY                     model nova-3, language ar
-  azure       AZURE_SPEECH_KEY + AZURE_SPEECH_REGION   locale ar-EG (Egyptian)
+  azure       AZURE_SPEECH_KEY + AZURE_SPEECH_ENDPOINT (or AZURE_SPEECH_REGION)   locale ar-EG (Egyptian), profanity unmasked
   google      gcloud application-default login + GOOGLE_CLOUD_PROJECT   Speech-to-Text v2, chirp_2, locale ar-EG
+  munsit      MUNSIT_API_KEY                       Munsit (CNTXT AI) model munsit, Arabic, dialect auto-detected
 """
 import io
 import json
@@ -107,12 +108,26 @@ def deepgram_transcribe(audio, model="nova-3"):
         return ""
 
 
-def azure_transcribe(audio):
-    region = _env("AZURE_SPEECH_REGION")
-    url = "https://%s.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=ar-EG&format=simple" % region
-    r = _post(url, wav_bytes(audio), {"Ocp-Apim-Subscription-Key": _env("AZURE_SPEECH_KEY"),
+def azure_transcribe(audio, language="ar-EG"):
+    """Azure AI Speech, REST API for short audio (<= 60 s per clip). Credentials in .env or the environment:
+    AZURE_SPEECH_KEY plus either AZURE_SPEECH_ENDPOINT (https://<resource>.cognitiveservices.azure.com, the form new
+    resources get) or AZURE_SPEECH_REGION (e.g. eastus, the older regional endpoint). profanity=raw keeps every word
+    unmasked, otherwise the service replaces some words with asterisks and the error rate would be wrong."""
+    key = _env("AZURE_SPEECH_KEY")
+    endpoint = os.environ.get("AZURE_SPEECH_ENDPOINT") or (_load_dotenv() or os.environ.get("AZURE_SPEECH_ENDPOINT"))
+    if endpoint:
+        base = endpoint.rstrip("/") + "/stt/speech/recognition/conversation/cognitiveservices/v1"
+    else:
+        base = "https://%s.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1" % _env("AZURE_SPEECH_REGION")
+    url = base + "?language=%s&format=simple&profanity=raw" % language
+    r = _post(url, wav_bytes(audio), {"Ocp-Apim-Subscription-Key": key,
                                      "Content-Type": "audio/wav; codecs=audio/pcm; samplerate=16000", "Accept": "application/json"})
-    return r.get("DisplayText", "") if r.get("RecognitionStatus") == "Success" else ""
+    status = r.get("RecognitionStatus")
+    if status == "Success":
+        return r.get("DisplayText", "")
+    if status in ("NoMatch", "InitialSilenceTimeout", "BabbleTimeout"):
+        return ""                       # the service heard no usable speech: score as empty, do not retry
+    raise RuntimeError("Azure RecognitionStatus=%s" % status)
 
 
 _gtoken = {}
@@ -139,7 +154,21 @@ def google_transcribe(audio, model="chirp_2", location="us-central1"):
     return " ".join(res["alternatives"][0]["transcript"] for res in r.get("results", []) if res.get("alternatives")).strip()
 
 
-PROVIDERS = {"openai": openai_transcribe, "elevenlabs": elevenlabs_transcribe, "deepgram": deepgram_transcribe,
+def munsit_transcribe(audio, model="munsit"):
+    """Munsit (CNTXT AI), Arabic specialist; dialect is detected automatically. Key: MUNSIT_API_KEY (x-api-key header).
+    model 'munsit' = Arabic only (default), 'munsit-en-ar' = mixed Arabic/English. 100 credits per minute of audio;
+    the free plan has 10,000 credits. Timestamps are switched off to keep responses small (they are free anyway)."""
+    body, ctype = _multipart({"model": model, "return_timestamps": "false"},
+                             {"file": ("clip.wav", wav_bytes(audio), "audio/wav")})
+    r = _post("https://api.munsit.com/api/v1/audio/transcribe", body,
+              {"x-api-key": _env("MUNSIT_API_KEY"), "Content-Type": ctype})
+    data = r.get("data") or {}
+    if "transcription" not in data:
+        raise RuntimeError("Munsit response without transcription: %s" % str(r)[:200])
+    return data.get("transcription", "")
+
+
+PROVIDERS = {"openai": openai_transcribe, "elevenlabs": elevenlabs_transcribe, "deepgram": deepgram_transcribe, "munsit": munsit_transcribe,
              "azure": azure_transcribe, "google": google_transcribe,
              "elevenlabs-v3": lambda audio: elevenlabs_transcribe(audio, model="scribe_v3"),   # newer Scribe, accepted by the API (Nov 2026)
              "elevenlabs-v1": lambda audio: elevenlabs_transcribe(audio, model="scribe_v1")}

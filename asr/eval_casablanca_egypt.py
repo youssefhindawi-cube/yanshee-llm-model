@@ -37,7 +37,20 @@ sys.path.insert(0, os.path.join(HERE, "sygma"))
 from sygma_asr import is_degenerate, normalize_arabic_text  # noqa: E402  (leaderboard normalisation, verbatim)
 
 RATE = 16000
-OUT = os.path.join(HERE, "results", "casablanca_egypt")
+OUT = os.path.join(HERE, "results", "casablanca_egypt")   # overridden per --dataset in main()
+DATASETS = {"casablanca": "the Casablanca Egypt test split (846 clips, downloaded from Hugging Face)",
+            "fabhaus30": "30 clips from fabhaus/masri_audio_transcription (test split), stored in asr/clips_fabhaus30/"}
+
+
+def load_local_clips(folder, limit=0):
+    """A local clip set: <folder>/refs.jsonl with seg_id/text/duration, and <folder>/<seg_id>.wav at 16 kHz mono."""
+    rows = []
+    for line in io.open(os.path.join(folder, "refs.jsonl"), encoding="utf-8"):
+        r = json.loads(line)
+        rows.append({"seg_id": r["seg_id"], "text": r["text"], "duration": r["duration"], "bytes": open(os.path.join(folder, r["seg_id"] + ".wav"), "rb").read()})
+        if limit and len(rows) >= limit:
+            break
+    return rows
 
 
 def load_egypt_test(limit=0):
@@ -142,6 +155,7 @@ def run_cohere(rows, system, batch=None):
 
 
 def run_cloud(rows, provider, workers=4):
+    workers = int(os.environ.get("CLOUD_WORKERS", workers))   # free tiers allow few parallel requests: CLOUD_WORKERS=1
     """Calls the provider for every clip, 4 at a time, caching each answer on disk so a rerun costs nothing."""
     import concurrent.futures as cf
     from cloud_asr import PROVIDERS
@@ -184,11 +198,20 @@ def main():
                     help="any of: whisper whisper-adapter %s cloud:openai cloud:elevenlabs cloud:deepgram cloud:azure cloud:google" % " ".join(COHERE_MODES))
     ap.add_argument("--limit", type=int, default=0, help="only the first N clips")
     ap.add_argument("--batch", type=int, default=0, help="override the Cohere batch size")
+    ap.add_argument("--workers", type=int, default=0, help="parallel requests for cloud providers (default 4; use 1-2 on free tiers)")
+    ap.add_argument("--dataset", default="casablanca", choices=list(DATASETS), help="which clip set to score (results go to asr/results/<dataset>/)")
     a = ap.parse_args()
     import torch
-    rows = load_egypt_test(a.limit)
+    if a.workers:
+        os.environ["CLOUD_WORKERS"] = str(a.workers)
+    global OUT
+    if a.dataset == "casablanca":
+        rows = load_egypt_test(a.limit)
+    else:
+        OUT = os.path.join(HERE, "results", a.dataset)
+        rows = load_local_clips(os.path.join(HERE, "clips_" + a.dataset), a.limit)
     hours = sum(r["duration"] for r in rows) / 3600
-    print("Casablanca / Egypt / test: %d clips, %.2f h" % (len(rows), hours), flush=True)
+    print("%s: %d clips, %.2f h" % (DATASETS[a.dataset], len(rows), hours), flush=True)
     os.makedirs(OUT, exist_ok=True)
     summary = {}
     for system in a.systems:

@@ -2,3 +2,5 @@
 {"time": "2026-11-02 17:37", "results": {"cohere-greedy": {"WER": 32.26, "CER": 26.15, "clips": 3, "hours": 0.003, "seconds": 3.6, "rtf": 0.383, "breakdowns": 0}}}
 {"time": "2026-11-02 17:38", "results": {"cohere-sygma": {"WER": 35.48, "CER": 30.0, "clips": 3, "hours": 0.003, "seconds": 3.7, "rtf": 0.387, "breakdowns": 0}}}
 {"time": "2026-11-02 17:54", "results": {"cloud:elevenlabs": {"WER": 25.81, "CER": 14.62, "clips": 3, "hours": 0.003, "seconds": 2.2, "rtf": 0.228, "breakdowns": 0}}}
+{"time": "2026-11-03 13:55", "results": {"cloud:deepgram": {"WER": 32.26, "CER": 19.23, "clips": 3, "hours": 0.003, "seconds": 3.6, "rtf": 0.377, "breakdowns": 0}}}
+{"time": "2026-11-03 14:03", "results": {"cloud:munsit": {"WER": 25.81, "CER": 9.23, "clips": 3, "hours": 0.003, "seconds": 3.5, "rtf": 0.372, "breakdowns": 0}}}

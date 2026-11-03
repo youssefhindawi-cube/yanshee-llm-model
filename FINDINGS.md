@@ -137,13 +137,24 @@ real-speech columns: every system transcribed the speech actually present in the
 | Cohere, plain 8-beam (local) | 33.0% | 13.9% | 36.2% |
 | Cohere + Sygma (local) | 33.5% | 14.5% | 37.6% |
 | Cohere greedy (local) | 34.9% | 14.6% | 38.1% |
+| Munsit, CNTXT AI, model `munsit` (cloud, Arabic specialist, dialect auto-detected) | 37.2% | **12.9%** | 41.3% |
 | ElevenLabs Scribe v3 (cloud, undocumented model id `scribe_v3`) | 43.3% | 18.5% | 48.6% |
 | ElevenLabs Scribe v1 (cloud) | 46.0% | 19.5% | 50.9% |
 | ElevenLabs Scribe v2 (cloud) | 47.0% | 19.7% | 51.8% |
+| Deepgram Nova-3, `language=ar` (cloud) | 57.2% | 26.1% | 57.8% |
 | Whisper-large-v3 (local) | 62.8% | 30.2% | 65.6% |
 | Whisper + adapter (local) | 64.7% | 30.5% | 67.4% |
 
 Per-clip wins (lowest WER, ties shared): Cohere + Sygma 19, Scribe v3 13, Scribe v1 10, Scribe v2 9, Whisper 4.
+Deepgram (added 2026-11-03, 30 clips, $200 free credit, no card): 57.2% WER on the 27 real clips, 5 of 30 clips returned
+empty, no punctuation, and it writes ه for ة (e.g. حاجه), which the leaderboard normalisation counts as errors; unifying
+ة/ه only moves it a few points, so it remains below ElevenLabs and well below Cohere. Per-clip wins with Deepgram in the
+mix: Cohere 21, Scribe v3 14, Deepgram 5, Whisper 4. Full-set run deliberately not done.
+
+Munsit (added 2026-11-03, 30 clips, free plan 10,000 credits, no card, ~200 credits used): 37.2% WER / 12.9% CER on
+the 27 real clips, second only to Cohere on WER and the best CER of every system. Its errors are mostly character-level
+(split or merged words such as "اه بل", "كدهفضل"), never an empty output. Per-clip wins with Munsit in: Cohere 19,
+Scribe v3 12, Munsit 11, Deepgram 4, Whisper 3. Adapter: `cloud:munsit` (x-api-key, `MUNSIT_API_KEY` in .env).
 Clips with zero word errors: Cohere 4, Scribe v1 4, Scribe v2 4, Scribe v3 3, Whisper 1.
 
 Reading: Cohere stays ~10 WER points ahead of the best ElevenLabs model; Scribe v3 is the best ElevenLabs version
@@ -151,6 +162,48 @@ Reading: Cohere stays ~10 WER points ahead of the best ElevenLabs model; Scribe 
 clips (on all 846, Sygma leads). ElevenLabs' characteristic failure is inventing words on utterances under ~2 s.
 `scribe_v3` is accepted by the API but absent from ElevenLabs' reference and changelog as of 2026-11-03: treat as a
 preview. Harness providers: `cloud:elevenlabs` (v2), `cloud:elevenlabs-v3`, `cloud:elevenlabs-v1`.
+
+### Second Egyptian set: fabhaus30 (2026-11-03), and the old-vs-new comparison
+
+Motivation: a concern that Cohere might have been trained on Casablanca. Second set: 30 clips drawn (seed 42, 2–15 s,
+>= 3 words) from the test split of `fabhaus/masri_audio_transcription` (Hugging Face, MIT, Nov 2024; natural Egyptian
+conversation, human-written transcripts, provenance undocumented). Stored in `asr/clips_fabhaus30/` (3.8 MB, 119 s,
+309 words) with `refs.jsonl`; run with `--dataset fabhaus30`; results in `asr/results/fabhaus30/`;
+`asr/compare_sets.py` prints old vs new. Candidates rejected: `Yousef1258852/arabic-asr-egyptian-eval` (no audio),
+`ehabnegm/masri-podcast-300h` (ASR-made transcripts, Levantine samples), `NightPrince/MasriSpeech-Test` (no text),
+`ismaeeelxd/Egyptian-Arabic-Lectures` (30 s clips, 303/305 with English, Gemini-made transcripts). Note: the
+inspection downloaded two full test splits (~550 MB) before the user asked to limit traffic; avoid that next time.
+
+WER on 27 (Casablanca) / 30 (fabhaus30) real-speech clips. "Unified" additionally maps ى→ي and ة→ه, because Cohere
+writes word-final ى on the new set ("فى", "اللى") and Deepgram writes ة as ه, which the leaderboard normalisation
+counts as errors although they are spelling conventions.
+
+| System | Casablanca 30, strict | Casablanca 30, unified | fabhaus30, strict | fabhaus30, unified |
+|---|---|---|---|---|
+| Munsit | 37.2 | 36.3 | **25.4** | **25.4** |
+| ElevenLabs v2 | 47.0 | 44.7 | 29.2 | 29.2 |
+| ElevenLabs v1 | 46.0 | 43.7 | 29.5 | 29.5 |
+| Cohere + Sygma | 33.5 | 31.2 | 35.9 | 30.5 |
+| Cohere greedy | 34.9 | 32.6 | 36.9 | 31.5 |
+| Cohere beam8 | **33.0** | **30.7** | 38.3 | 32.9 |
+| Deepgram Nova-3 | 57.2 | 51.6 | 36.9 | 35.9 |
+| Whisper-large-v3 | 62.8 | 61.4 | 36.3 | 36.3 |
+| Whisper + adapter | 64.7 | 63.3 | 36.6 | 36.6 |
+| ElevenLabs v3 | 43.3 | 40.5 | 45.1 | 45.1 |
+
+Per-clip wins (strict): Casablanca — Cohere+Sygma 16, Cohere beam8 15, ElevenLabs v3 12, Munsit 9; fabhaus30 — Munsit 22,
+ElevenLabs v2 21, ElevenLabs v1 19, Whisper 17, Cohere+Sygma 11.
+
+Reading:
+- **Cohere's accuracy is the same on both sets** (unified 31.2 → 30.5). A model trained on Casablanca would show an
+  advantage there that vanishes on unseen data; it does not. This is evidence against contamination, not proof.
+- **Every other system improves massively on the new set** (Whisper 61→36, ElevenLabs 44→29, Deepgram 52→36, Munsit
+  36→25): fabhaus30 is cleaner, calmer speech (interviews/podcasts) than Casablanca's noisy TV drama. Cohere's edge is
+  robustness on hard, noisy dialect audio, which is the closer match to a receptionist robot in a lobby.
+- **Munsit is the most consistent and the best on the clean set**; ElevenLabs v1/v2 are strong on clean speech; v3 got
+  worse on the new set (45%), so it is not a safe upgrade. Whisper-large-v3 is competitive on clean speech only.
+- Recommendation unchanged for the robot (noisy, far-field): Cohere locally, Munsit as the cloud alternative. For clean
+  recorded audio, Munsit first.
 
 ## 8. Cloud speech-to-text, ElevenLabs, Claude
 

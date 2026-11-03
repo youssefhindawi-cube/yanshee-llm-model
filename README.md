@@ -19,6 +19,8 @@ built around it. Private: `Q_Brain_Brief_Yanshee.md` / `.pdf` contain an interna
 | `asr/cloud_asr.py` | Cloud speech-to-text adapters (OpenAI, ElevenLabs, Deepgram, Azure, Google) with keys from the environment or a git-ignored `.env`. |
 | `asr/elevenlabs_transcribe.py` | `python3 asr/elevenlabs_transcribe.py file.m4a` prints the ElevenLabs transcript of any audio file. |
 | `asr/results/casablanca_egypt/` | Per-clip predictions and summaries from the benchmark runs below. |
+| `asr/clips_fabhaus30/`, `asr/results/fabhaus30/` | Second Egyptian test set (30 clips from `fabhaus/masri_audio_transcription`, MIT) and its results; `--dataset fabhaus30`. |
+| `asr/compare_sets.py` | Prints every system on both 30-clip sets side by side. |
 | `scripts/download_models.sh` | Fetches the Piper voices and Vosk models that are not in git. |
 
 ## Setup (laptop)

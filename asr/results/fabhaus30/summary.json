@@ -1,0 +1,10 @@
+{"time": "2026-11-03 14:16", "results": {"cloud:elevenlabs-v3": {"WER": 45.08, "CER": 24.24, "clips": 30, "hours": 0.033, "seconds": 18.9, "rtf": 0.158, "breakdowns": 0}}}
+{"time": "2026-11-03 14:16", "results": {"whisper": {"WER": 36.27, "CER": 15.7, "clips": 30, "hours": 0.033, "seconds": 27.6, "rtf": 0.231, "breakdowns": 0}}}
+{"time": "2026-11-03 14:16", "results": {"cloud:elevenlabs": {"WER": 29.15, "CER": 11.91, "clips": 30, "hours": 0.033, "seconds": 20.8, "rtf": 0.174, "breakdowns": 0}}}
+{"time": "2026-11-03 14:16", "results": {"whisper-adapter": {"WER": 36.61, "CER": 15.63, "clips": 30, "hours": 0.033, "seconds": 31.5, "rtf": 0.264, "breakdowns": 0}}}
+{"time": "2026-11-03 14:17", "results": {"cloud:elevenlabs-v1": {"WER": 29.49, "CER": 11.5, "clips": 30, "hours": 0.033, "seconds": 22.5, "rtf": 0.189, "breakdowns": 0}}}
+{"time": "2026-11-03 14:17", "results": {"cohere-greedy": {"WER": 36.95, "CER": 15.77, "clips": 30, "hours": 0.033, "seconds": 5.9, "rtf": 0.049, "breakdowns": 0}}}
+{"time": "2026-11-03 14:17", "results": {"cohere-beam8": {"WER": 38.31, "CER": 18.32, "clips": 30, "hours": 0.033, "seconds": 7.5, "rtf": 0.063, "breakdowns": 0}}}
+{"time": "2026-11-03 14:17", "results": {"cohere-sygma": {"WER": 35.93, "CER": 14.81, "clips": 30, "hours": 0.033, "seconds": 7.4, "rtf": 0.062, "breakdowns": 0}}}
+{"time": "2026-11-03 14:17", "results": {"cloud:deepgram": {"WER": 36.95, "CER": 20.52, "clips": 30, "hours": 0.033, "seconds": 32.8, "rtf": 0.275, "breakdowns": 0}}}
+{"time": "2026-11-03 14:18", "results": {"cloud:munsit": {"WER": 25.42, "CER": 10.54, "clips": 30, "hours": 0.033, "seconds": 35.3, "rtf": 0.296, "breakdowns": 0}}}
