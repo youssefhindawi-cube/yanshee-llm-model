@@ -197,8 +197,10 @@ ElevenLabs v2 21, ElevenLabs v1 19, Whisper 17, Cohere+Sygma 11.
 
 Added 2026-11-03: **Speechmatics** (second-best cloud after Munsit on both sets; drops fillers and repeats and adds
 punctuation, so verbatim WER understates it; CER 11.4 on fabhaus30). **Gemini** (`gemini-3.5-flash`, thinking off,
-verbatim prompt; `gemini-2.5-flash` is retired for new keys and `gemini-3.8-flash` was overloaded) ran under a flaky
-phone-hotspot connection; its table rows are added once both sets are complete. Harness now retries clips on
+verbatim prompt; `gemini-2.5-flash` is retired for new keys and `gemini-3.8-flash` was overloaded): the AI Studio
+free tier allows only **20 generate-content requests per day**, so 21 Casablanca clips were answered (18 real-speech:
+36.4% WER / 17.3% CER, between Cohere and ElevenLabs on that set; first clip near-perfect) and the rest, 9 + 30 clips,
+need two more days of quota or billing. Table rows are added once both sets are complete. Harness now retries clips on
 transient network errors. A full-846 Speechmatics run was started by mistake and stopped after ~11 extra clips.
 
 Reading:
