@@ -105,31 +105,7 @@ def run_whisper(rows, adapter):
     return out
 
 
-def _load_cohere_bf16(device):
-    """Sygma's loader, but bfloat16 weights (its float32 load needs 8.4 GB; an 8 GB GPU cannot hold that)."""
-    import json as _json
-    from pathlib import Path
-    import torch
-    import transformers
-    from huggingface_hub import snapshot_download
-    import sygma_asr
-    local = snapshot_download(sygma_asr.BASE_MODEL, revision=sygma_asr.BASE_REVISION)
-    from cohere_asr.modeling_cohere_asr import CohereAsrForConditionalGeneration
-    from cohere_asr.processing_cohere_asr import (CohereAsrFeatureExtractor, CohereAsrProcessor,
-                                                  _maybe_load_preprocessor_buffers_from_checkpoint)
-    from cohere_asr.tokenization_cohere_asr import CohereAsrTokenizer
-    transformers.CohereAsrFeatureExtractor = CohereAsrFeatureExtractor
-    transformers.CohereAsrTokenizer = CohereAsrTokenizer
-    pp = _json.load(open(f"{local}/config.json"))["preprocessor"]
-    fe = CohereAsrFeatureExtractor(
-        feature_size=pp["features"], sampling_rate=pp["sample_rate"],
-        n_window_size=int(pp["window_size"] * pp["sample_rate"]), n_window_stride=int(pp["window_stride"] * pp["sample_rate"]),
-        window=pp["window"], normalize=pp["normalize"], n_fft=pp["n_fft"], log=pp["log"],
-        frame_splicing=pp["frame_splicing"], dither=pp["dither"], pad_to=pp["pad_to"], padding_value=pp["pad_value"])
-    _maybe_load_preprocessor_buffers_from_checkpoint(feature_extractor=fe, model_dir=Path(local))
-    processor = CohereAsrProcessor(feature_extractor=fe, tokenizer=CohereAsrTokenizer.from_pretrained(local))
-    model = CohereAsrForConditionalGeneration.from_pretrained(local, torch_dtype=torch.bfloat16).to(device).eval()
-    return processor, model
+from backends import load_cohere_bf16 as _load_cohere_bf16  # noqa: E402  (shared with the live app)
 
 
 COHERE_MODES = {

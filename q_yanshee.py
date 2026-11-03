@@ -36,11 +36,29 @@ MAX_WORDS = 60  # about 25-30 seconds of speech
 
 
 # ---------------------------------------------------------------- knowledge (from the md)
+AR = re.compile(r"[\u0600-\u06ff]")
+
+
 def norm(text):
-    """Lower-case, strip punctuation, and drop a plural 's' so 'projects' matches 'project'."""
+    """Make keywords and recognised speech comparable: lower-case, strip punctuation, drop an English plural 's',
+    and for Arabic: remove diacritics and tatweel, unify hamza/alef forms, ة->ه, ى->ي, Eastern->Western digits,
+    and strip a leading و/ف and the article ال from longer words ("والمكتب" -> "مكتب")."""
     text = text.lower()
-    text = re.sub(r"[^a-z0-9؀-ۿ ]+", " ", text)
-    words = [w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w for w in text.split()]
+    text = re.sub(r"[\u064b-\u0652\u0640]", "", text)
+    text = re.sub("[أإآ]", "ا", text).replace("ة", "ه").replace("ى", "ي").replace("ؤ", "و").replace("ئ", "ي").replace("ء", "")
+    for e, w in zip("٠١٢٣٤٥٦٧٨٩", "0123456789"):
+        text = text.replace(e, w)
+    text = re.sub(r"[^a-z0-9\u0600-\u06ff ]+", " ", text)
+    words = []
+    for w in text.split():
+        if AR.match(w):
+            if len(w) > 3 and w[0] in "وف":
+                w = w[1:]
+            if len(w) > 4 and w.startswith("ال"):
+                w = w[2:]
+        elif len(w) > 3 and w.endswith("s") and not w.endswith("ss"):
+            w = w[:-1]
+        words.append(w)
     return " " + " ".join(words) + " "
 
 
@@ -75,7 +93,7 @@ def load_brain(md_path, internal=False):
                 fallback = answer
                 continue
             kws = [norm(k) for k in keys.split(",") if k.strip()]
-            rules.append({"title": title, "kws": kws, "answer": answer, "guard": title.startswith("Projects")})
+            rules.append({"title": title, "kws": kws, "answer": answer, "guard": title.startswith("Projects") or "المشاريع" in title})
 
     if internal:
         part2 = False
@@ -89,7 +107,7 @@ def load_brain(md_path, internal=False):
             if part2 and m:
                 label, body = m.group(1), m.group(2)
                 body = re.sub(r"\*+", "", body)
-                label_words = [w for w in re.split(r"[^a-z]+", label.lower()) if len(w) > 3]
+                label_words = [w for w in re.split(r"[^a-z\u0600-\u06ff]+", label.lower()) if len(w) > 3 or (AR.match(w) and len(w) > 2)]
                 rules.append({"title": "INTERNAL: " + label, "kws": [norm(w) for w in label_words],
                               "answer": body, "guard": False, "internal": True})
     if not fallback:
@@ -97,17 +115,26 @@ def load_brain(md_path, internal=False):
     return rules, fallback
 
 
+def kw_in(k, q):
+    """Keyword k (normalised, space-padded) occurs in question q: as whole words, or, for keywords of 5+ letters,
+    as the start of a word, so Arabic suffixes do not hide it ("هتتكلفك" still matches "هتتكلف")."""
+    if k in q:
+        return True
+    stem = k.strip()
+    return len(stem) >= 5 and " " not in stem and any(w.startswith(stem) for w in q.split())
+
+
 def best_answer(question, rules, fallback):
     q = norm(question)
     # safety first: price / safety / project questions always go to the human-hand-off answer
     for r in rules:
-        if r["guard"] and any(k in q for k in r["kws"] if len(k.strip()) > 3):
+        if r["guard"] and any(kw_in(k, q) for k in r["kws"] if len(k.strip()) > 3 or AR.search(k)):   # Arabic words are short
             return r["title"], trim_words(r["answer"])
     best, best_score = None, 0
     for r in rules:
         score = 0
         for k in r["kws"]:
-            if k in q:
+            if kw_in(k, q):
                 score += len(k.strip().split())  # longer phrases count more
         if score > best_score:
             best, best_score = r, score
@@ -134,7 +161,17 @@ _piper = {}  # the loaded Piper voice, kept in memory so each answer starts in a
 
 
 def load_pc_voice(name):
-    """Load Piper voice ./voices/<name>.onnx. Returns the name, or None if Piper or the model is missing."""
+    """Load Piper voice ./voices/<name>.onnx, or an engine from asr/tts_backends.py ("voicetut:Hassan", "munsit:Fares").
+    Returns the voice name, or None if it is missing (the reason is kept in _piper["why"])."""
+    if name.split(":")[0] in ("voicetut", "munsit"):
+        sys.path.insert(0, os.path.join(HERE, "asr"))
+        try:
+            from tts_backends import make_tts
+            _piper["engine"] = make_tts(name)
+            return _piper["engine"].name
+        except Exception as e:
+            _piper["why"] = "%s: %s" % (name, e)
+            return None
     model = os.path.join(VOICES_DIR, name + ".onnx")
     if not os.path.exists(model):
         _piper["why"] = "no file " + model
@@ -150,22 +187,26 @@ def load_pc_voice(name):
 
 def pc_speak(text):
     """Speak on the laptop: Piper if loaded, else espeak, else just the printed text."""
-    voice = _piper.get("voice")
-    if voice is not None:
+    voice, engine = _piper.get("voice"), _piper.get("engine")
+    if voice is not None or engine is not None:
         import subprocess
         player = None
         try:
-            for chunk in voice.synthesize(text):  # sentence by sentence: playback starts while the rest renders
+            if engine is not None:             # VoiceTut / Munsit: (sample_rate, int16 samples) per sentence
+                chunks = ((pcm.tobytes(), sr) for sr, pcm in engine.synth(text))
+            else:
+                chunks = ((c.audio_int16_bytes, c.sample_rate) for c in voice.synthesize(text))
+            for data, sr in chunks:            # sentence by sentence: playback starts while the rest renders
                 if player is None:
-                    player = subprocess.Popen(["aplay", "-q", "-r", str(chunk.sample_rate), "-f", "S16_LE",
+                    player = subprocess.Popen(["aplay", "-q", "-r", str(sr), "-f", "S16_LE",
                                                "-c", "1", "-t", "raw", "-"], stdin=subprocess.PIPE)
-                player.stdin.write(chunk.audio_int16_bytes)
+                player.stdin.write(data)
             if player is not None:
                 player.stdin.close()
                 player.wait()
             return
-        except OSError as e:  # aplay missing or audio device busy: fall through to espeak
-            print("(piper playback failed: %s)" % e)
+        except (OSError, RuntimeError) as e:  # aplay missing, audio device busy, engine failed: fall through to espeak
+            print("(voice playback failed: %s)" % e)
     if os.system("which espeak >/dev/null 2>&1") == 0:
         os.system('espeak "%s"' % text.replace('"', ""))
 
@@ -291,7 +332,21 @@ def mic_listen(timeout=MIC_TIMEOUT):
 
 # ---------------------------------------------------------------- tests and main
 def selftest(rules, fallback):
+    arabic = any(AR.search(k) for r in rules for k in r["kws"])
     cases = [
+        ("ازيك يا كيو", "Greeting"),
+        ("انت مين", "Who is Q?"),
+        ("مين اللي اسس كيوب", "Who founded Cube?"),
+        ("القاهرة ٢٠٥٠ دي ايه", "What is Cairo 2050?"),
+        ("احكيلي عن الاهتمامات الاربعة", "The Four Cares"),
+        ("عندكم كام استوديو", "How many studios?"),
+        ("مكتبكم فين", "Where are you?"),
+        ("رؤيتكم ايه للمستقبل", "Vision"),
+        ("المشروع ده هيتكلف كام", "Projects / prices / safety"),
+        ("المبنى ده آمن", "Projects / prices / safety"),
+        ("شكرا يا كيو مع السلامة", "Closing"),
+        ("الجو عامل ايه النهارده", "(fallback)"),
+    ] if arabic else [
         ("hello there", "Greeting"),
         ("who are you", "Who is Q?"),
         ("what is cairo 2050", "What is Cairo 2050?"),
@@ -308,6 +363,7 @@ def selftest(rules, fallback):
     bad = 0
     for q, want in cases:
         got, ans = best_answer(q, rules, fallback)
+        got = got.split(" · ")[0]
         ok = got == want and len(ans.split()) <= MAX_WORDS
         bad += 0 if ok else 1
         print("%-4s %-38s -> %-28s (%d words)" % ("OK" if ok else "FAIL", q, got, len(ans.split())))
@@ -315,7 +371,7 @@ def selftest(rules, fallback):
     return bad == 0
 
 
-WAKE = re.compile(r"\b(hey|hay|he|hi|hello|ok|okay)[ ,.!?-]*(q|queue|cue|kew)\b", re.I)
+WAKE = re.compile(r"\b(hey|hay|he|hi|hello|ok|okay)[ ,.!?-]*(q|queue|cue|kew)\b|(يا|هاي|اهلا|أهلا)\s*كيو", re.I)
 
 
 def main():
@@ -328,7 +384,8 @@ def main():
     ap.add_argument("--internal", action="store_true", help="also answer Part 2 (private tests only)")
     ap.add_argument("--ip", default=None, help="Yanshee IP when running from a PC")
     ap.add_argument("--voice", default=DEFAULT_VOICE,
-                    help="laptop voice: name of a .onnx in ./voices (default %(default)s), or 'espeak'")
+                    help="laptop voice: name of a .onnx in ./voices (default %(default)s), 'espeak', "
+                         "or an Egyptian engine: voicetut[:Speaker] (local), munsit[:Voice] (cloud)")
     ap.add_argument("--mic", action="store_true", help="listen with the laptop microphone (offline Vosk)")
     ap.add_argument("--stt", default=DEFAULT_STT, help="Vosk model folder inside ./stt (default %(default)s)")
     a = ap.parse_args()
@@ -336,7 +393,10 @@ def main():
     if not os.path.exists(a.md):
         sys.exit("Cannot find the md file: %s  (copy Q_Brain_Brief_Yanshee.md next to this script)" % a.md)
     rules, fallback = load_brain(a.md, internal=a.internal)
-    print("Loaded %d answers from %s%s" % (len(rules), os.path.basename(a.md), " (+internal)" if a.internal else ""))
+    arabic = any(AR.search(k) for r in rules for k in r["kws"])
+    print("Loaded %d answers from %s%s%s" % (len(rules), os.path.basename(a.md), " (+internal)" if a.internal else "", " [Arabic]" if arabic else ""))
+    if arabic and a.voice == DEFAULT_VOICE and os.path.exists(os.path.join(VOICES_DIR, "ar_JO-kareem-medium.onnx")):
+        a.voice = "ar_JO-kareem-medium"
 
     if a.selftest:
         sys.exit(0 if selftest(rules, fallback) else 1)
@@ -349,14 +409,14 @@ def main():
     if yan is None:
         loaded = None if a.voice == "espeak" else load_pc_voice(a.voice)
         why = "chosen with --voice espeak" if a.voice == "espeak" else _piper.get("why", "")
-        print("Laptop voice:", "Piper " + loaded if loaded else "espeak (%s)" % why)
+        print("Laptop voice:", ("" if _piper.get("engine") else "Piper ") + loaded if loaded else "espeak (%s)" % why)
     if a.mic:
         try:
             print("Laptop microphone: Vosk", load_mic(a.stt))
         except RuntimeError as e:
             sys.exit("Cannot use --mic: %s" % e)
 
-    speak("Q is online. Ask me about Cube Consultants.", yan)
+    speak("كيو جاهز. اسألني عن كيوب للاستشارات." if arabic else "Q is online. Ask me about Cube Consultants.", yan)
     while True:
         try:
             heard = (input("You> ") if a.text else mic_listen() if a.mic else listen(yan)).strip()

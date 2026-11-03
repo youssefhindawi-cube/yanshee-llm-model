@@ -1,6 +1,6 @@
 # Findings and work log — Q on Yanshee, laptop voice stack, Egyptian-Arabic speech-to-text
 
-Last updated: 2026-11-02. Repo: `youssefhindawi-cube/yanshee-llm-model` (private). Work was done on an
+Last updated: 2026-11-03. Repo: `youssefhindawi-cube/yanshee-llm-model` (private). Work was done on an
 HP Victus 16 laptop (Ubuntu, kernel 6.8, RTX 4060 Laptop 8 GB, 31 GB RAM, Python 3.10 user-site packages).
 
 This file is the hand-over: what exists, what was measured, which data and models were used, what is still open.
@@ -45,6 +45,14 @@ recognition, which is the hard part of putting Q in front of Egyptian visitors.
 - Researched the Open Universal Arabic ASR Leaderboard (§6), ran the Egyptian benchmark (§7),
   surveyed cloud services (§8), connected ElevenLabs (§8), checked the Claude API (§8).
 - Created the git repo and pushed everything (§10).
+
+### 2026-11-03
+- Second Egyptian test set (`asr/clips_fabhaus30/`), Deepgram / Munsit / Speechmatics / Gemini adapters, the
+  old-vs-new comparison and the final ranking across both 30-clip sets (§7, §8).
+- Q in Egyptian Arabic: `Q_Brain_Brief_Yanshee_ar.md`, Arabic normalisation in `q_yanshee.py`, `asr/backends.py`
+  (one call for Whisper / Cohere / Munsit), `live_arabic_web.py --model cohere|munsit --brain ...` (§10b).
+- Q's voice: `asr/tts_backends.py` (VoiceTut-TTS local in its own venv, Munsit Faseeh cloud, Piper),
+  `live_arabic_web.py --speak`, `q_yanshee.py --voice voicetut:NAME`; measurements, verdict and run commands in §10c.
 
 ## 3. The laptop microphone: what is true
 
@@ -296,10 +304,93 @@ and needs two more free-tier days (9 + 30 clips) to be ranked.
   (key `~/.ssh/github_yanshee`), commit identity `youssefhindawi-cube <yousef.hendawe@cubeconsult.org>`.
   `gh` has both this account and the Nodogoro work account logged in (`gh auth switch`).
 
+## 10b. Q in Egyptian Arabic (2026-11-03): speech in, text out
+
+- `Q_Brain_Brief_Yanshee_ar.md`: the brief in Arabic with Egyptian keywords and spoken Egyptian answers (<60 words);
+  same structure the parser expects (`### Speech-ready quick answers`, `## PART 2`, `(anything else)` fallback,
+  guard row title contains "المشاريع"). Titles are bilingual ("Greeting · تحية"); the self-test compares the English part.
+- `q_yanshee.py`: `norm()` now normalises Arabic (diacritics, tatweel, أإآ→ا, ة→ه, ى→ي, ؤ→و, ئ→ي, ء dropped, Eastern
+  digits, leading و/ف and ال stripped from longer words); keywords of 5+ letters also match as word prefixes (suffixes
+  like ـك/ـكم); the price/safety guard counts short Arabic keywords; Arabic self-test (12/12) and Arabic Piper voice
+  (`ar_JO-kareem-medium`, Jordanian) when the brain is Arabic; wake phrase "يا كيو".
+- `asr/backends.py` (whisper / cohere / munsit behind one call) and `asr/live_arabic_web.py --model ... --brain ...`:
+  each final transcript is matched by the brain and Q's reply is shown under it on the page (and printed/logged).
+- End-to-end test: 7 Egyptian questions spoken by the Piper Arabic voice, streamed through the browser path with
+  `--model cohere`: 7/7 transcribed and answered, 6/7 on the intended row before the prefix-match fix (the miss was
+  "هتتكلف كام" heard as "هتتكلفك"), 7/7 after. Cohere latency 0.12–0.20 s per phrase on the RTX 4060.
+- Voice output is in 10c. Still open: live test with the user's own voice through the browser; the robot path.
+
+## 10c. Q's voice in Egyptian Arabic (2026-11-03): VoiceTut-TTS (local) vs Munsit Faseeh (cloud)
+
+Piper's only Arabic voice is Jordanian MSA and sounds robotic, so two Egyptian candidates were wired in behind one
+interface (`asr/tts_backends.py`: `make_tts("voicetut:Hassan" | "munsit:Fares" | "piper:...")`, each `.synth(text)`
+yields `(sample_rate, int16)` chunks). `live_arabic_web.py --speak ENGINE[:VOICE]` synthesises every reply in a
+separate thread, serves the chunks at `/reply_audio/N.wav` and the page plays them in order; the page stops posting
+microphone audio while Q talks (plus the browser's echo cancellation), so Q does not answer itself.
+`q_yanshee.py --voice voicetut:Hassan` / `--voice munsit:Fares` does the same through the speakers (aplay).
+The same greeting spoken by every voice is in `asr/tts_samples/` (`sentence.txt` is the text): listen and choose.
+
+**Munsit Faseeh TTS (cloud)** — `POST /api/v1/text-to-speech/faseeh-v1-preview` with `{voice_id, text, stability,
+speed, streaming}`, `x-api-key` header (the same key as the STT). Works on the free tier (10 calls made on 2026-11-03,
+HTTP 200 every time; the API has no usage endpoint, so the remaining credits must be read on app.munsit.com).
+- `GET /voices/public` returns a plain list of 176 voices: 120 Emirati, 20 Najdi, 12 Fusha (MSA), 3 Hijazi, 2 Kuwaiti,
+  2 Bahraini, 1 Omani, 1 Qatari and 14 English. **No Egyptian voice** in the public list, although the sign-in page
+  advertises Egyptian; the Egyptian text is read with a Fusha or Gulf accent. Default here: `Fares` (Fusha male);
+  samples also made with Moataz (Fusha male), Lina (Fusha female), Ahmed (Emirati), Majed (Emirati).
+- Output: 24 kHz mono 16-bit WAV (`streaming: false`) or raw PCM16 chunks (`streaming: true`, content type
+  `audio/raw;codec=pcm16;rate=24000`).
+- Speed is the problem: the 117-character greeting (about 10 s of speech) took 2.7, 9.2, 16.4, 19.1 and 27.8 s to come
+  back in non-streaming mode (varies with server load); in streaming mode the first bytes arrive after 3.0 s but the
+  audio arrives at 0.4x real time (10.4 s of audio in 24.6 s), so playback would stutter unless most of it is buffered.
+  End-to-end test (3 Piper-spoken questions through the browser path, `--model cohere --speak munsit:Fares`): 3/3
+  answered, voice ready 12.1, 4.8 and 6.9 s after the text reply. Usable for a demo, too slow for a receptionist.
+
+**VoiceTut-TTS (local, Egyptian)** — `mohammedaly22/VoiceTut-TTS` (Apache-2.0), an OmniVoice (Qwen3-0.6B backbone)
+fine-tune for Egyptian Arabic with 19 built-in speakers (Ahmed, Ali, Hassan, Karim, Mahmoud, Mohammed, Mostafa, Ramy, Shaker, Tareq, Yehia, Youssef; Hadeer, Hanan, Mariam, Rana, Sarah, Yasmin, Yara), 24 kHz, `pip install voicetut-tts` plus the OmniVoice
+backbone from GitHub. OmniVoice needs transformers 5, which this project cannot have in the user site (section 10),
+so it lives in `~/.venvs/voicetut` (`scripts/setup_voicetut.sh`); the venv shares the user-site CUDA PyTorch through
+symlinks in `~/.venvs/voicetut/shared` (`zz_shared_torch.pth`) instead of downloading 3 GB of torch again.
+`asr/voicetut_worker.py` runs inside the venv and streams sentence WAVs back to the main process over a pipe.
+Model download: `optimizer.bin` (4.9 GB, training only) is skipped; the 2.45 GB `model.safetensors` stalled twice at
+67 MB with huggingface_hub on this connection and was fetched with a resumable `curl -C -` loop into the HF cache.
+Results on the RTX 4060 (8 GB), fp16, 32 diffusion steps, the same 117-character greeting (about 10 s of speech):
+- Load 6.7 s, 2.0 GB VRAM after load, 2.3 GB peak while generating. The worker splits the text at sentence
+  punctuation and sends each sentence as soon as it is ready: **first sentence after 1.1–2.0 s**, whole answer in
+  4.9–8.0 s, i.e. 0.5–0.76x real time (the page is already playing sentence 1 while 2–4 render). Second run of the
+  same speaker 5.6 s. CPU (float32) is unusable: first sentence after 44 s, 196 s for the whole answer (20x real time).
+- End-to-end with Cohere + Sygma in the same GPU (`--model cohere --speak voicetut:Hassan`, 3 Piper-spoken
+  questions through the browser path): 3/3 answered on the right row; the first voice chunk was ready 1.5, 1.9 and
+  1.2 s after each text reply; GPU memory peaked at 6.96 GB of 8.19 GB (Cohere 4.2 + VoiceTut 2.3 + CUDA contexts),
+  so both fit, with about 1.2 GB to spare. Cohere's own latency rose from 0.15 to 0.8 s on the one phrase that
+  arrived while a reply was still being synthesised (they share the GPU).
+- Samples: `asr/tts_samples/voicetut_{Ahmed,Ali,Hassan,Hadeer,Hanan}.wav` next to `munsit_{Fares,Moataz,Lina,Ahmed,
+  Majed}.wav` and `piper_ar_JO-kareem-medium.wav`. Quality was not judged by ear here (no listening possible from the
+  session): the user should play them and pick the speaker; only VoiceTut's are Egyptian.
+
+**Verdict.** VoiceTut is the receptionist voice: local, Egyptian, about 1.5 s to the first spoken words, free
+(Apache-2.0), and it fits next to Cohere on the 8 GB card. Munsit Faseeh is a cloud fallback only: no Egyptian voice
+today and 5–28 s per answer. Keep Piper's Jordanian voice for machines without a GPU. Still to do: the user's listening
+test to choose the speaker (`--speak voicetut:NAME`), a live test with the user's own voice through the browser page,
+and the robot path (the Yanshee speaker would have to play the WAV chunks that the page plays today).
+
+**How to run (hand-over).** From `llm_model/` (keys for the cloud options in `.env`):
+```
+python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan   # open http://127.0.0.1:8765, press Start
+python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hanan    # any of the 19 speakers
+python3 asr/live_arabic_web.py --model munsit --brain Q_Brain_Brief_Yanshee_ar.md --speak munsit:Fares     # cloud recogniser and cloud voice
+python3 q_yanshee.py --md Q_Brain_Brief_Yanshee_ar.md --text --voice voicetut:Hassan   # keyboard in, voice out through the speakers
+python3 asr/tts_backends.py voicetut:Hassan "أهلاً بيك في كيوب" out.wav              # one WAV from any text and engine
+```
+Speakers: male Ahmed, Ali, Hassan, Karim, Mahmoud, Mohammed, Mostafa, Ramy, Shaker, Tareq, Yehia, Youssef; female Hadeer,
+Hanan, Mariam, Rana, Sarah, Yasmin, Yara (plain `voicetut` = Ahmed; `munsit` = Fares). `--tts-steps 16` trades quality
+for speed (fewer diffusion steps; not measured here); `--tts-device cpu` runs but at 20x real time. The first start loads
+the recogniser and the voice; wait until the page's status line shows `voice: ...` before pressing Start. The page's
+"play Q's voice" checkbox silences the replies without stopping the text.
+
 ## 11. Open items / suggested next steps
 
-1. Wire Cohere + Sygma into `live_arabic_web.py` as the local backend (`--model cohere`), keep Whisper as the
-   alternative; compare on the user's own voice. Expect large gains on dialect speech.
+1. Done 2026-11-03: Cohere + Sygma is `--model cohere` in `live_arabic_web.py` (Whisper stays the default, Munsit
+   is the cloud option; §10b). Still open: compare the three recognisers on the user's own voice through the page.
 2. Use a headset or close microphone for any serious live test; the built-in mic picks up room speech.
 3. `q_yanshee.py`: add `who founded` to the founder row's keywords (self-test 12/12); fix `listen()` to use
    the Yanshee dictation functions; try `from YansheeRobot import YanAPI`; test English dictation on the robot.
@@ -309,3 +400,7 @@ and needs two more free-tier days (9 + 30 clips) to be ranked.
 5. The 50-step LoRA adapter should be dropped; if fine-tuning is ever wanted, start from Cohere's model,
    not Whisper, and use data whose licence permits derivatives (Casablanca's does not).
 6. Keep `.env` out of git (already ignored) and rotate the ElevenLabs key if it is ever exposed.
+7. Voice (10c): listen to `asr/tts_samples/` and pick the VoiceTut speaker; run the browser page with
+   `--speak voicetut:NAME` and your own voice; check the Munsit credit balance on app.munsit.com (the API does not
+   report it) and ask Munsit whether an Egyptian Faseeh voice is coming; for the robot, play the reply WAVs on the
+   Yanshee instead of in the browser.

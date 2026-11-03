@@ -9,7 +9,13 @@ built around it. Private: `Q_Brain_Brief_Yanshee.md` / `.pdf` contain an interna
 |---|---|
 | `q_yanshee.py` | The Q "brain": keyword matching over the speech-ready table in `Q_Brain_Brief_Yanshee.md`. No LLM, no network. Runs on the robot (robot TTS/ASR via YanAPI) or on a laptop (`--text`, `--mic`, Piper voice). |
 | `Q_Brain_Brief_Yanshee.md` | The knowledge file Q answers from (public Part 1, internal Part 2 behind `--internal`). |
-| `asr/live_arabic_web.py` | Live Egyptian-Arabic speech-to-text: the browser captures the mic, Whisper large-v3 + an Egyptian LoRA adapter transcribe on the GPU, results stream to a right-to-left web page. |
+| `Q_Brain_Brief_Yanshee_ar.md` | The same brain in Arabic: Egyptian keywords and spoken Egyptian answers; `q_yanshee.py --md Q_Brain_Brief_Yanshee_ar.md` (Arabic matching: hamza/ة/ى/diacritics/digits/ال-و prefixes normalised). |
+| `asr/live_arabic_web.py` | Live Egyptian-Arabic speech-to-text in the browser. `--model whisper|cohere|munsit` picks the recogniser; `--brain Q_Brain_Brief_Yanshee_ar.md` turns it into Q: each spoken question is answered in Egyptian Arabic as text; `--speak voicetut:Hassan` (local) or `--speak munsit:Fares` (cloud) also speaks the answer in the browser, muting the microphone while Q talks. |
+| `asr/backends.py` | The three recognisers behind one interface (Whisper + adapter, Cohere + Sygma in bfloat16, Munsit cloud). |
+| `asr/tts_backends.py` | The voices behind one interface: `voicetut[:Speaker]` (VoiceTut-TTS, local Egyptian, 19 speakers: 12 male, 7 female), `munsit[:Voice]` (Munsit Faseeh cloud TTS, Fusha/Gulf voices only), `piper[:voice]` (offline baseline). `python3 asr/tts_backends.py voicetut:Hassan "النص" out.wav` makes a file. |
+| `asr/voicetut_worker.py` | VoiceTut runs in its own virtual environment (it needs transformers 5); this worker is started by `tts_backends.py` and streams sentences back over a pipe. |
+| `scripts/setup_voicetut.sh` | Creates `~/.venvs/voicetut` (OmniVoice + voicetut-tts, sharing the laptop's CUDA PyTorch) and fetches the 2.5 GB model. |
+| `asr/tts_samples/` | The same Q greeting spoken by every voice tested (listen before choosing). |
 | `asr/live_arabic.py` | Same pipeline in the terminal (`--mic` or `--wav file`). Shares Silero VAD, the denoiser and the transcriber with the web version. |
 | `asr/denoise.py` | High-pass + spectral gate used before Whisper. |
 | `asr/test_arabic_whisper.py` | Batch comparison of Whisper large-v3 with and without the Arabic adapter on `asr/clips/`. |
@@ -29,6 +35,7 @@ built around it. Private: `Q_Brain_Brief_Yanshee.md` / `.pdf` contain an interna
 pip install --user -r requirements.txt      # torch first, from pytorch.org, for your CUDA
 scripts/download_models.sh                  # Piper voices + Vosk models (~570 MB)
 sudo apt install espeak                     # optional fallback voice
+scripts/setup_voicetut.sh                   # optional: VoiceTut Egyptian voice in its own venv (~/.venvs/voicetut) + 2.5 GB model
 ```
 
 ## Run
@@ -40,6 +47,10 @@ python3 q_yanshee.py --mic                  # laptop microphone (offline Vosk) +
 python3 q_yanshee.py --ip 192.168.x.x       # drive a Yanshee over the network (needs YanAPI.py next to the script)
 
 python3 asr/live_arabic_web.py              # then open http://127.0.0.1:8765 and press Start
+python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md   # speak Egyptian, Q replies in Arabic text
+python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan   # ... and in an Egyptian voice (local)
+python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak munsit:Fares    # ... cloud voice (Fusha; needs MUNSIT_API_KEY)
+python3 q_yanshee.py --md Q_Brain_Brief_Yanshee_ar.md --text --voice voicetut:Hassan   # keyboard in, Egyptian voice out through the speakers
 python3 asr/live_arabic.py --wav clip.m4a   # transcribe a recording through the live pipeline
 python3 asr/test_arabic_whisper.py asr/clips cuda
 ```

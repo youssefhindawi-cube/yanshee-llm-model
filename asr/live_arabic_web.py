@@ -3,6 +3,10 @@
 
   python3 asr/live_arabic_web.py              # then open http://127.0.0.1:8765 in Edge or Chrome and press Start
   python3 asr/live_arabic_web.py --no-adapter --language auto --log out.txt --port 8765
+  python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md   # talk to Q in Egyptian; replies as text
+  python3 asr/live_arabic_web.py --model munsit --brain Q_Brain_Brief_Yanshee_ar.md   # same, cloud recogniser
+  python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan    # spoken replies (local Egyptian voice)
+  python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak munsit:Fares       # spoken replies (cloud voice)
 
 The web page captures the microphone with the browser's own audio stack (device picker, optional noise
 suppression and gain control), streams 16 kHz PCM to this script, and shows the live transcript with proper
@@ -22,9 +26,12 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import numpy as np
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+HERE_DIR = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE_DIR)
 from live_arabic import FIRM_CUT_S, FRAME, FRAME_MS, MAX_PHRASE_S, MIN_VOICED_MS, RATE, SOFT_CUT_S, SpeechDetector, Transcriber, is_hallucination  # noqa: E402
 from denoise import Highpass, SpectralGate  # noqa: E402
+from backends import make_backend  # noqa: E402
+from tts_backends import make_tts, wav_bytes  # noqa: E402
 
 HTML = r"""<!doctype html>
 <html lang="ar"><head><meta charset="utf-8"><title>Live Arabic transcription</title>
@@ -42,6 +49,8 @@ HTML = r"""<!doctype html>
   #status { font-size: 14px; opacity: .8; min-height: 1.2em; }
   .ar { direction: rtl; text-align: right; font-family: "Noto Naskh Arabic", "Noto Sans Arabic", "Amiri", "Scheherazade New", "Segoe UI", sans-serif; }
   #partial { font-size: 30px; line-height: 1.7; min-height: 2.2em; opacity: .55; padding: 10px 14px; border: 1px dashed #8886; border-radius: 10px; margin: 14px 0; }
+  .reply { font-size: 28px; line-height: 1.7; padding: 10px 16px 10px 14px; margin: 0 0 6px 40px; border-right: 4px solid #1a7f37; background: #1a7f3712; border-radius: 8px; }
+  .reply .who { font-size: 13px; opacity: .6; direction: ltr; display: block; }
   .final { font-size: 30px; line-height: 1.7; padding: 8px 14px; border-bottom: 1px solid #8883; display: flex; gap: 16px; align-items: baseline; }
   .final .meta { direction: ltr; font-size: 12px; opacity: .55; font-family: monospace; white-space: nowrap; margin-left: auto; }
   .final.unclear { opacity: .5; }
@@ -52,6 +61,7 @@ HTML = r"""<!doctype html>
   <button id="start">Start</button><button id="stop" disabled>Stop</button>
   <select id="mic"><option value="">default microphone</option></select>
   <label><input type="checkbox" id="proc" checked> browser noise suppression + auto gain</label>
+  <label id="voicebox" hidden><input type="checkbox" id="voice" checked> play Q's voice</label>
   <div id="meter"><div id="level"></div></div>
   <button id="clear" style="margin-left:auto">Clear</button>
 </div>
@@ -61,6 +71,15 @@ HTML = r"""<!doctype html>
 <script>
 const $ = id => document.getElementById(id);
 let ctx, stream, node, running = false, es;
+let aq = [], playing = false, speaking = false;          // Q's voice: play chunks in order, mute the mic meanwhile
+function playNext() {
+  if (playing || !aq.length) return;
+  playing = true; speaking = true;
+  const a = new Audio(aq.shift());
+  const done = () => { playing = false; if (aq.length) playNext(); else setTimeout(() => { if (!playing) speaking = false; }, 400); };
+  a.onended = done; a.onerror = done;
+  a.play().catch(done);
+}
 function setStatus(t) { $('status').textContent = t; }
 async function listMics() {
   try {
@@ -84,7 +103,18 @@ function connectEvents() {
       d.querySelector('.meta').textContent = ev.time + ' · ' + ev.audio_s.toFixed(1) + 's audio · ' + ev.proc_s.toFixed(2) + 's · conf ' + (ev.conf === undefined ? '-' : ev.conf.toFixed(2)) + (ev.unclear ? ' (unclear)' : '');
       $('finals').prepend(d);
     }
-    else if (ev.type === 'status') { setStatus(ev.text); if (ev.model) $('model').textContent = ev.model; }
+    else if (ev.type === 'reply') {
+      const d = document.createElement('div'); d.className = 'reply ar';
+      d.innerHTML = '<span class="who"></span><span class="text"></span>';
+      d.querySelector('.who').textContent = 'Q  ·  ' + (ev.title || ''); d.querySelector('.text').textContent = ev.text; d.dataset.id = ev.id;
+      const first = $('finals').firstChild; if (first) first.insertAdjacentElement('afterend', d); else $('finals').prepend(d);
+    }
+    else if (ev.type === 'audio') {
+      if ($('voice').checked) { aq.push(ev.url); playNext(); }
+      const who = document.querySelector('.reply[data-id="' + ev.id + '"] .who');
+      if (who && !who.textContent.includes('🔊')) who.textContent += '   🔊 ' + ev.gen_s.toFixed(1) + 's';
+    }
+    else if (ev.type === 'status') { setStatus(ev.text); if (ev.model) $('model').textContent = ev.model; if (ev.voice) $('voicebox').hidden = false; }
   };
   es.onerror = () => setStatus('lost connection to the Python script (is it still running?)');
 }
@@ -103,7 +133,7 @@ async function start() {
   const label = stream.getAudioTracks()[0].label;
   await fetch('/control', { method: 'POST', body: JSON.stringify({ cmd: 'start', device: label, rate: ctx.sampleRate }) });
   node.onaudioprocess = e => {
-    if (!running) return;
+    if (!running || speaking) return;                 // drop the mic while Q's reply plays (no self-listening)
     const f = e.inputBuffer.getChannelData(0), pcm = new Int16Array(f.length);
     for (let i = 0; i < f.length; i++) { const v = Math.max(-1, Math.min(1, f[i])); pcm[i] = v < 0 ? v * 32768 : v * 32767; }
     fetch('/audio', { method: 'POST', body: pcm.buffer, headers: { 'Content-Type': 'application/octet-stream' } }).catch(() => {});
@@ -128,7 +158,16 @@ class Hub:
     def __init__(self):
         self.audio = queue.Queue()
         self.clients, self.history, self.lock = [], [], threading.Lock()
-        self.model_label = ""
+        self.model_label, self.voice_label = "", ""
+        self.tts_q, self.sounds, self.n_reply, self.n_sound = queue.Queue(), collections.OrderedDict(), 0, 0
+
+    def add_sound(self, data):
+        with self.lock:
+            self.n_sound += 1
+            self.sounds[self.n_sound] = data
+            while len(self.sounds) > 30:
+                self.sounds.popitem(last=False)
+            return self.n_sound
 
     def publish(self, ev):
         if ev["type"] == "final":
@@ -163,7 +202,7 @@ def make_handler(hub):
                 self.end_headers()
                 q = hub.subscribe()
                 try:
-                    self.wfile.write(("data: " + json.dumps({"type": "status", "text": "connected", "model": hub.model_label}, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                    self.wfile.write(("data: " + json.dumps({"type": "status", "text": "connected", "model": hub.model_label, "voice": hub.voice_label}, ensure_ascii=False) + "\n\n").encode("utf-8"))
                     for ev in hub.history:
                         self.wfile.write(("data: " + json.dumps(ev, ensure_ascii=False) + "\n\n").encode("utf-8"))
                     self.wfile.flush()
@@ -178,6 +217,19 @@ def make_handler(hub):
                     pass
                 finally:
                     hub.unsubscribe(q)
+                return
+            if self.path.startswith("/reply_audio/"):
+                try:
+                    data = hub.sounds[int(self.path.split("/")[-1].split(".")[0])]
+                except (ValueError, KeyError):
+                    self.send_response(404)
+                    self.end_headers()
+                    return
+                self.send_response(200)
+                self.send_header("Content-Type", "audio/wav")
+                self.send_header("Content-Length", str(len(data)))
+                self.end_headers()
+                self.wfile.write(data)
                 return
             body = HTML.encode("utf-8")
             self.send_response(200)
@@ -226,7 +278,38 @@ def save_wav(path, audio_int16):
         w.writeframes(np.ascontiguousarray(audio_int16).tobytes())
 
 
-def worker(hub, asr, det, a, log):
+def load_q_brain(path, internal=False):
+    """The keyword brain from q_yanshee.py (project root), with its Arabic-aware normalisation."""
+    root = os.path.dirname(HERE_DIR)
+    sys.path.insert(0, root)
+    import q_yanshee
+    rules, fallback = q_yanshee.load_brain(path, internal=internal)
+    return {"rules": rules, "fallback": fallback, "best_answer": q_yanshee.best_answer, "n": len(rules)}
+
+
+def speaker(hub, tts, log):
+    """Voice thread: synthesise each reply (sentence by sentence when the engine can) and send the chunks to the page."""
+    while True:
+        rid, text = hub.tts_q.get()
+        t, n, secs, first = time.time(), 0, 0.0, None
+        try:
+            for sr, pcm in tts.synth(text):
+                n += 1
+                secs += len(pcm) / sr
+                first = first or (time.time() - t)
+                sid = hub.add_sound(wav_bytes(sr, pcm))
+                hub.publish({"type": "audio", "id": rid, "url": "/reply_audio/%d.wav" % sid, "audio_s": round(len(pcm) / sr, 2), "gen_s": round(time.time() - t, 2)})
+            line = "voice: %.1f s of audio in %.2f s, %d chunk(s), first chunk after %.2f s" % (secs, time.time() - t, n, first or 0)
+            print("    " + line, flush=True)
+            if log:
+                log.write("    %s\n" % line)
+                log.flush()
+        except Exception as e:
+            print("    voice failed: %s" % e, flush=True)
+            hub.publish({"type": "status", "text": "voice failed: %s" % e})
+
+
+def worker(hub, asr, det, a, log, brain=None, tts=None):
     hp = Highpass(a.highpass) if a.highpass > 0 else None
     clean = (lambda x: x) if a.no_denoise else SpectralGate()
     pre = collections.deque(maxlen=300 // FRAME_MS)
@@ -258,6 +341,16 @@ def worker(hub, asr, det, a, log):
         if log:
             log.write("[%s] %s\n" % (ev["time"], text))
             log.flush()
+        if brain is not None:                      # the Q brain: match the question, answer as text and (with --speak) as voice
+            title, answer = brain["best_answer"](text, brain["rules"], brain["fallback"])
+            hub.n_reply += 1
+            hub.publish({"type": "reply", "id": hub.n_reply, "title": title.split(" · ")[0], "text": answer})
+            print("    Q [%s]: %s" % (title, answer), flush=True)
+            if tts is not None:
+                hub.tts_q.put((hub.n_reply, answer))
+            if log:
+                log.write("    Q: %s\n" % answer)
+                log.flush()
 
     for item in frames(hub):
         if isinstance(item, dict):
@@ -322,6 +415,12 @@ def worker(hub, asr, det, a, log):
 def main():
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0], formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--port", type=int, default=8765)
+    ap.add_argument("--model", default="whisper", choices=["whisper", "cohere", "munsit"], help="recogniser: whisper (default), cohere (local, best on noisy dialect), munsit (cloud)")
+    ap.add_argument("--brain", help="Q brain Markdown (e.g. Q_Brain_Brief_Yanshee_ar.md): each final transcript is answered by Q as text")
+    ap.add_argument("--internal", action="store_true", help="with --brain: also load the internal Part 2 answers (private tests only)")
+    ap.add_argument("--speak", help="with --brain: speak the replies. voicetut[:Speaker] (local Egyptian, e.g. voicetut:Hassan; names: Ahmed, Ali, Hassan, Karim, Mahmoud, Mohammed, Mostafa, Ramy, Shaker, Tareq, Yehia, Youssef, Hadeer, Hanan, ...), munsit[:Voice] (cloud, e.g. munsit:Fares), piper[:voice]")
+    ap.add_argument("--tts-device", default=None, help="for --speak voicetut: cuda (default) or cpu; use cpu if the GPU is full")
+    ap.add_argument("--tts-steps", type=int, default=32, help="for --speak voicetut: diffusion steps (16 = faster, 32 = default quality)")
     ap.add_argument("--no-adapter", action="store_true", help="plain whisper-large-v3 without the Egyptian adapter")
     ap.add_argument("--language", default="ar", help="ar (default), en, ... or auto")
     ap.add_argument("--device", default=None, help="cuda or cpu (default: cuda if available)")
@@ -343,13 +442,32 @@ def main():
     if device == "cpu" and a.partial_every < 4:
         a.partial_every = 4
     hub = Hub()
-    asr = Transcriber(device, not a.no_adapter, a.beams)
+    if a.model == "whisper":
+        asr = Transcriber(device, not a.no_adapter, a.beams)
+        model_label = "+ Egyptian adapter" if not a.no_adapter else "(no adapter)"
+    else:
+        asr = make_backend(a.model, device=device)
+        model_label = "· " + asr.name
+        print("model ready:", asr.name)
+    brain = load_q_brain(a.brain, a.internal) if a.brain else None
+    if brain:
+        print("Q brain: %d answers from %s" % (brain["n"], os.path.basename(a.brain)))
+        model_label += "  ·  Q brain: " + os.path.basename(a.brain)
+    tts = None
+    if a.speak:
+        if not brain:
+            sys.exit("--speak needs --brain (there is nothing to say without the Q brain)")
+        tts = make_tts(a.speak, device=a.tts_device, steps=a.tts_steps)
+        print("voice:", tts.name, flush=True)
+        model_label += "  ·  voice: " + tts.name
+        hub.voice_label = tts.name
+        threading.Thread(target=speaker, args=(hub, tts, None), daemon=True).start()
     det = SpeechDetector(a.threshold, a.vad)
     print("phrase detection:", det.name)
     print("noise handling: %s%s" % ("high-pass %.0f Hz" % a.highpass if a.highpass > 0 else "no high-pass", ", spectral gate" if not a.no_denoise else ", no gate"))
-    hub.model_label = "+ Egyptian adapter" if not a.no_adapter else "(no adapter)"
+    hub.model_label = model_label
     log = io.open(a.log, "a", encoding="utf-8") if a.log else None
-    threading.Thread(target=worker, args=(hub, asr, det, a, log), daemon=True).start()
+    threading.Thread(target=worker, args=(hub, asr, det, a, log, brain, tts), daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(hub))
     srv.daemon_threads = True
     print("ready: open http://127.0.0.1:%d in Edge or Chrome and press Start  (Ctrl-C here to quit)" % a.port, flush=True)
@@ -361,6 +479,8 @@ def main():
         srv.server_close()
         if log:
             log.close()
+        if tts is not None and hasattr(tts, "close"):
+            tts.close()
 
 
 if __name__ == "__main__":
