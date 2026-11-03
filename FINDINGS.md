@@ -127,6 +127,20 @@ attach و) with word and character Levenshtein error rates (NeMo not installed; 
 | Whisper-large-v3 | 46.05% | 22.37% | 535 s | 4 |
 | ElevenLabs Scribe, first 3 clips only | 25.8% (3 clips) | 14.6% (3 clips) | 2 s | 0 |
 
+Ten-clip comparison (2026-11-03; ElevenLabs sent 10 clips, ~40 s of audio, cached in
+`asr/results/casablanca_egypt/cache_elevenlabs.jsonl`). Clip `22_1` is excluded from the 9-clip columns: its
+reference is the label "[Music]" while all systems correctly transcribed the speech in it.
+
+| System | WER, 9 real clips | CER, 9 real clips | WER, all 10 |
+|---|---|---|---|
+| Cohere + Sygma | 40.0% | 26.6% | 49.2% |
+| Cohere greedy | 41.7% | 26.3% | 50.8% |
+| ElevenLabs Scribe | 50.0% | 29.2% | 63.9% |
+| Whisper-large-v3 | 81.7% | 47.4% | 90.2% |
+
+These ten are harder than the set average (Cohere+Sygma 27% on all 846); the ordering Cohere > ElevenLabs >
+Whisper held on both samples, but ranking ElevenLabs against Cohere with confidence needs the full hour.
+
 Observations:
 - Cohere cuts Whisper's word errors by 40% and character errors by nearly half, 4–7× faster.
 - Sygma (8-best beam search with a per-word reward of β = 1.0, length penalty 0, plus a breakdown filter)
