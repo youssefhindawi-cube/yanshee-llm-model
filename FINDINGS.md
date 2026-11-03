@@ -214,6 +214,33 @@ Reading:
 - Recommendation unchanged for the robot (noisy, far-field): Cohere locally, Munsit as the cloud alternative. For clean
   recorded audio, Munsit first.
 
+### Final ranking across both 30-clip sets (2026-11-03)
+
+Average over the two sets (Casablanca 27 real-speech clips, fabhaus30 30 clips). "Unified" maps ى→ي and ة→ه; "strict"
+is the leaderboard's own normalisation. Sorted by average strict WER, the leaderboard convention:
+
+| Rank | System | Avg WER strict | Avg WER unified | Avg CER | Casablanca unif. | fabhaus30 unif. | Coverage |
+|---|---|---|---|---|---|---|---|
+| 1 | Munsit (cloud, Arabic specialist) | **31.3** | 30.9 | **11.6** | 36.3 | 25.4 | full |
+| 2 | Cohere + Sygma (local) | 34.7 | **30.8** | 13.7 | 31.2 | 30.5 | full |
+| 3 | Speechmatics (cloud) | 35.0 | 32.1 | 14.5 | 37.7 | 26.4 | full |
+| 4 | Cohere beam8 (local) | 35.7 | 31.8 | 15.2 | 30.7 | 32.9 | full |
+| 5 | Cohere greedy (local) | 35.9 | 32.0 | 14.2 | 32.6 | 31.5 | full |
+| 6 | ElevenLabs v1 (cloud) | 37.8 | 36.6 | 15.2 | 43.7 | 29.5 | full |
+| 7 | ElevenLabs v2 (cloud) | 38.1 | 36.9 | 15.5 | 44.7 | 29.2 | full |
+| 8 | ElevenLabs v3 (cloud, undocumented) | 44.2 | 42.8 | 21.0 | 40.5 | 45.1 | full |
+| 9 | Deepgram Nova-3 (cloud) | 47.1 | 43.8 | 22.6 | 51.6 | 35.9 | full |
+| 10 | Whisper-large-v3 (local) | 49.5 | 48.8 | 22.7 | 61.4 | 36.3 | full |
+| 11 | Whisper + Egyptian LoRA adapter (local) | 50.6 | 49.9 | 22.9 | 63.3 | 36.6 | full |
+| – | Gemini 3.5 Flash (cloud) | n/a | n/a | n/a | 34.9 (18 of 27 clips) | not run | **incomplete**: free tier is 20 requests/day |
+
+Munsit and Cohere + Sygma are joint first: a tenth of a point apart on unified WER, Munsit ahead on strict WER (Cohere's
+word-final ى costs it ~3 points) and on CER, Cohere ahead by 5 points on the noisy Casablanca clips, Munsit by 5 on the
+clean fabhaus30 clips. Choice by conditions: **Cohere (local) for noisy, far-field use such as the robot in a lobby;
+Munsit for clean audio or as the cloud option; Speechmatics next (largest free allowance, 240 min/month).** Everything
+from ElevenLabs v3 down is 10+ points behind on at least one set. Gemini sat in the top group on the 18 clips it answered
+and needs two more free-tier days (9 + 30 clips) to be ranked.
+
 ## 8. Cloud speech-to-text, ElevenLabs, Claude
 
 - Services with an explicit Egyptian setting: Google Cloud Speech-to-Text (`ar-EG`), Azure AI Speech
