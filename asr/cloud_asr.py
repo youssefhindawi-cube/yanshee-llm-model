@@ -140,4 +140,6 @@ def google_transcribe(audio, model="chirp_2", location="us-central1"):
 
 
 PROVIDERS = {"openai": openai_transcribe, "elevenlabs": elevenlabs_transcribe, "deepgram": deepgram_transcribe,
-             "azure": azure_transcribe, "google": google_transcribe}
+             "azure": azure_transcribe, "google": google_transcribe,
+             "elevenlabs-v3": lambda audio: elevenlabs_transcribe(audio, model="scribe_v3"),   # newer Scribe, accepted by the API (Nov 2026)
+             "elevenlabs-v1": lambda audio: elevenlabs_transcribe(audio, model="scribe_v1")}

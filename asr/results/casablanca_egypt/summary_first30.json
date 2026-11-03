@@ -1,1 +1,3 @@
 {"time": "2026-11-03 12:59", "results": {"cloud:elevenlabs": {"WER": 51.83, "CER": 24.84, "clips": 30, "hours": 0.025, "seconds": 9.7, "rtf": 0.107, "breakdowns": 0}}}
+{"time": "2026-11-03 13:06", "results": {"cloud:elevenlabs-v3": {"WER": 48.62, "CER": 23.73, "clips": 30, "hours": 0.025, "seconds": 6.4, "rtf": 0.071, "breakdowns": 0}}}
+{"time": "2026-11-03 13:06", "results": {"cloud:elevenlabs-v1": {"WER": 50.92, "CER": 24.65, "clips": 30, "hours": 0.025, "seconds": 13.1, "rtf": 0.144, "breakdowns": 0}}}

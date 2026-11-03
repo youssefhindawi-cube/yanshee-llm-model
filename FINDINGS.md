@@ -127,23 +127,30 @@ attach و) with word and character Levenshtein error rates (NeMo not installed; 
 | Whisper-large-v3 | 46.05% | 22.37% | 535 s | 4 |
 | ElevenLabs Scribe, first 3 clips only | 25.8% (3 clips) | 14.6% (3 clips) | 2 s | 0 |
 
-Thirty-clip comparison (2026-11-03; ElevenLabs sent the first 30 clips, ~2 min of audio, cached in
-`asr/results/casablanca_egypt/cache_elevenlabs.jsonl`). Three clips whose reference is a label rather than
-speech (`22_1` "[Music]", `37_3` "[screaming]", `42_4` "[noise]") are excluded from the real-speech columns:
-every system transcribed the speech actually present in them. 27 real clips, 219 reference words.
+Thirty-clip comparison (2026-11-03; ElevenLabs Scribe v1, v2 and v3 each sent the first 30 clips, ~2 min of audio
+per version, cached in `asr/results/casablanca_egypt/cache_elevenlabs*.jsonl`). Three clips whose reference is a
+label rather than speech (`22_1` "[Music]", `37_3` "[screaming]", `42_4` "[noise]") are excluded from the
+real-speech columns: every system transcribed the speech actually present in them. 27 real clips, 219 reference words.
 
 | System | WER, 27 real clips | CER, 27 real clips | WER, all 30 |
 |---|---|---|---|
-| Cohere, plain 8-beam | 33.0% | 13.9% | 36.2% |
-| Cohere + Sygma | 33.5% | 14.5% | 37.6% |
-| Cohere greedy | 34.9% | 14.6% | 38.1% |
-| ElevenLabs Scribe | 47.0% | 19.7% | 51.8% |
-| Whisper-large-v3 | 62.8% | 30.2% | 65.6% |
-| Whisper + adapter | 64.7% | 30.5% | 67.4% |
+| Cohere, plain 8-beam (local) | 33.0% | 13.9% | 36.2% |
+| Cohere + Sygma (local) | 33.5% | 14.5% | 37.6% |
+| Cohere greedy (local) | 34.9% | 14.6% | 38.1% |
+| ElevenLabs Scribe v3 (cloud, undocumented model id `scribe_v3`) | 43.3% | 18.5% | 48.6% |
+| ElevenLabs Scribe v1 (cloud) | 46.0% | 19.5% | 50.9% |
+| ElevenLabs Scribe v2 (cloud) | 47.0% | 19.7% | 51.8% |
+| Whisper-large-v3 (local) | 62.8% | 30.2% | 65.6% |
+| Whisper + adapter (local) | 64.7% | 30.5% | 67.4% |
 
-Per-clip wins (lowest WER, ties shared): Cohere + Sygma 23, ElevenLabs 12, Whisper 6. The three Cohere decodings are
-within noise of each other on 27 clips; on the full 846 Sygma leads. ElevenLabs sits between Cohere and
-Whisper, with the same strengths (long clear sentences) and weaknesses (very short utterances) seen on 10 clips.
+Per-clip wins (lowest WER, ties shared): Cohere + Sygma 19, Scribe v3 13, Scribe v1 10, Scribe v2 9, Whisper 4.
+Clips with zero word errors: Cohere 4, Scribe v1 4, Scribe v2 4, Scribe v3 3, Whisper 1.
+
+Reading: Cohere stays ~10 WER points ahead of the best ElevenLabs model; Scribe v3 is the best ElevenLabs version
+(3–4 points better than v1/v2, which are indistinguishable); the three Cohere decodings are within noise on 27
+clips (on all 846, Sygma leads). ElevenLabs' characteristic failure is inventing words on utterances under ~2 s.
+`scribe_v3` is accepted by the API but absent from ElevenLabs' reference and changelog as of 2026-11-03: treat as a
+preview. Harness providers: `cloud:elevenlabs` (v2), `cloud:elevenlabs-v3`, `cloud:elevenlabs-v1`.
 
 ## 8. Cloud speech-to-text, ElevenLabs, Claude
 
