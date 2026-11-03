@@ -127,41 +127,23 @@ attach و) with word and character Levenshtein error rates (NeMo not installed; 
 | Whisper-large-v3 | 46.05% | 22.37% | 535 s | 4 |
 | ElevenLabs Scribe, first 3 clips only | 25.8% (3 clips) | 14.6% (3 clips) | 2 s | 0 |
 
-Ten-clip comparison (2026-11-03; ElevenLabs sent 10 clips, ~40 s of audio, cached in
-`asr/results/casablanca_egypt/cache_elevenlabs.jsonl`). Clip `22_1` is excluded from the 9-clip columns: its
-reference is the label "[Music]" while all systems correctly transcribed the speech in it.
+Thirty-clip comparison (2026-11-03; ElevenLabs sent the first 30 clips, ~2 min of audio, cached in
+`asr/results/casablanca_egypt/cache_elevenlabs.jsonl`). Three clips whose reference is a label rather than
+speech (`22_1` "[Music]", `37_3` "[screaming]", `42_4` "[noise]") are excluded from the real-speech columns:
+every system transcribed the speech actually present in them. 27 real clips, 219 reference words.
 
-| System | WER, 9 real clips | CER, 9 real clips | WER, all 10 |
+| System | WER, 27 real clips | CER, 27 real clips | WER, all 30 |
 |---|---|---|---|
-| Cohere + Sygma | 40.0% | 26.6% | 49.2% |
-| Cohere greedy | 41.7% | 26.3% | 50.8% |
-| ElevenLabs Scribe | 50.0% | 29.2% | 63.9% |
-| Whisper-large-v3 | 81.7% | 47.4% | 90.2% |
+| Cohere, plain 8-beam | 33.0% | 13.9% | 36.2% |
+| Cohere + Sygma | 33.5% | 14.5% | 37.6% |
+| Cohere greedy | 34.9% | 14.6% | 38.1% |
+| ElevenLabs Scribe | 47.0% | 19.7% | 51.8% |
+| Whisper-large-v3 | 62.8% | 30.2% | 65.6% |
+| Whisper + adapter | 64.7% | 30.5% | 67.4% |
 
-These ten are harder than the set average (Cohere+Sygma 27% on all 846); the ordering Cohere > ElevenLabs >
-Whisper held on both samples, but ranking ElevenLabs against Cohere with confidence needs the full hour.
-
-Observations:
-- Cohere cuts Whisper's word errors by 40% and character errors by nearly half, 4–7× faster.
-- Sygma (8-best beam search with a per-word reward of β = 1.0, length penalty 0, plus a breakdown filter)
-  adds ~1.4 WER points over greedy and removes decoding breakdowns entirely. Its authors tuned β on
-  non-test Saudi audio only.
-- Egyptian is the easier end of dialect speech: Whisper scores 46% here vs 72% on the leaderboard's
-  Casablanca average (which includes Maghrebi dialects). Compare systems against each other, not against
-  the leaderboard column.
-- ElevenLabs on 3 clips is in Cohere's league (Cohere+Sygma scores 35.5 / 30.0 on those same 3). Three clips
-  cannot rank them; the free plan's quota stopped a full run (1 hour of audio).
-- Per-clip predictions for every system: `asr/results/casablanca_egypt/*.jsonl` (reference + hypothesis).
-
-Running Cohere locally:
-- Loaded through the vendored Sygma code (`asr/sygma/`, Apache-2.0; `cohere_asr/` is Cohere's own model code
-  with a `GenerationMixin` fix). Pinned revision `c3e911b42149bf7a1e53d5cef9878aee87515a23`.
-- Loaded in **bfloat16** (Sygma's float32 load needs 8.4 GB). Each variant must run in its **own process**:
-  two loaded models exceed 8 GB.
-- Needs: `librosa`, `numba>=0.61` (NumPy-2 build; the system numba 0.55 crashes under NumPy 2),
-  `sentencepiece`, `coverage>=7` (numba imports `coverage.types`). All in `requirements.txt`.
-- Access: accept the model's terms on Hugging Face while logged in (`huggingface-cli whoami` shows the account),
-  then it downloads (4.1 GB). The download resumes poorly after an interruption (it restarted from zero once).
+Per-clip wins (lowest WER, ties shared): Cohere + Sygma 23, ElevenLabs 12, Whisper 6. The three Cohere decodings are
+within noise of each other on 27 clips; on the full 846 Sygma leads. ElevenLabs sits between Cohere and
+Whisper, with the same strengths (long clear sentences) and weaknesses (very short utterances) seen on 10 clips.
 
 ## 8. Cloud speech-to-text, ElevenLabs, Claude
 
