@@ -443,6 +443,33 @@ a reply (mostly the fallback line). Before a demo the brain needs a wake word ("
 `live_arabic_web.py --brain` does not use it) or push-to-talk; see §11 item 8. Still to do: the user's own voice in front of the
 robot; pick the volume; the robot's head/arm gestures while it talks (yanshee_sim) are a separate project.
 
+## 10e. Can the robot hear where a voice comes from? (2026-11-04, research)
+
+**The robot's microphone.** The sound card is a Microsemi/Microchip ZL38063 "Timberwolf" voice processor (firmware
+`/home/pi/ZLS38063/Microsemi_ZLS38063_1_P1_4_7_Firmware.bin`, driver `snd_soc_zl380xx` over SPI, audio over I2S). The chip
+itself can take up to 3-4 digital microphones with beamforming, three AECs and noise reduction, but the Yanshee carries **one
+microphone** (user manual and spec sheet: "single highly sensitive microphone"), and the I2S stream the Pi receives is the chip's
+processed mono output: a 2-channel capture from `hw:0,0` gives two identical channels (correlation 0.9999, lag 0), and 3 or 4
+channels are refused. The chip's tuning tools (MiTuner, firmware) are NDA-only from Microchip. So: **no direction of arrival is
+possible with the built-in microphone**; one microphone cannot tell left from right.
+
+**What it takes.** Direction finding needs at least two microphones a few centimetres apart (time difference of arrival); 4+ in
+a ring give 360°. Options, cheapest first:
+- A USB microphone array plugged into the Pi's USB port (the Pi HAT arrays are out: the Yanshee's I2S pins already carry the
+  Timberwolf). ReSpeaker USB 4-Mic Array (XMOS XVF3000, about US$60-70, Digi-Key lead time was 32 weeks when checked) does
+  AEC, beamforming and the direction itself on-board: `tuning.py DOAANGLE` reads the angle (0-359) over USB, and the array also
+  works as a plain USB microphone (`arecord -D plughw:ArrayUAC10`), which would replace the built-in mic for better far-field
+  pickup. Mounted on the chest, its angle maps to the head servo NeckLR (safe 45-135, i.e. +-45 deg; "turn around" for the rest).
+- Software for a raw multi-channel array: ODAS (introlab/odas, MIT, C, runs on a Pi 3, localization + tracking + separation,
+  JSON over sockets, `odas_web` GUI, `odas_ros`), pyroomacoustics' DOA module on the PC (MUSIC/NormMUSIC, SRP-PHAT, TOPS, ...;
+  needs the mic coordinates), HARK (robot audition suite with ROS, MUSIC-based), and the 2-mic GCC-PHAT minimum (xiongyihui/tdoa).
+- Without new hardware the "look at the speaker" effect can only come from vision: the 8 MP camera and face detection (the
+  robot's own `/v1/vision` face functions or OpenCV on the PC) to turn the head to the face, triggered when a phrase starts.
+
+**Plan if an array is bought.** Pi side: `pyusb` + the array's `tuning.py` polled at ~10 Hz over the existing ssh session (one
+more multiplexed command); PC side: when the VAD opens a phrase, take the current angle and `PUT /v1/servos/angles
+{"NeckLR": ...}` (REST) so the robot turns to the voice before Q answers; mic input from the array instead of the Timberwolf.
+
 ## 11. Open items / suggested next steps
 
 1. Done 2026-11-03: Cohere + Sygma is `--model cohere` in `live_arabic_web.py` (Whisper stays the default, Munsit
@@ -463,3 +490,5 @@ robot; pick the volume; the robot's head/arm gestures while it talks (yanshee_si
 8. Robot (10d): add a wake word to the live brain (`--wake "يا كيو"`: answer only a phrase that starts with it, or anything
    for N seconds after it) or push-to-talk, otherwise Q answers the whole room; test with your own voice in front of the
    robot and settle `--robot-volume`; then gestures while talking.
+9. Looking toward the speaker (10e): needs a USB microphone array (ReSpeaker XVF3000 or similar) on the Pi; the built-in
+   single microphone cannot give a direction. Vision (face detection) is the only no-hardware alternative.
