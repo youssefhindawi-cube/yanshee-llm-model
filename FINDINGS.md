@@ -1,6 +1,6 @@
 # Findings and work log — Q on Yanshee, laptop voice stack, Egyptian-Arabic speech-to-text
 
-Last updated: 2026-11-03. Repo: `youssefhindawi-cube/yanshee-llm-model` (private). Work was done on an
+Last updated: 2026-11-04. Repo: `youssefhindawi-cube/yanshee-llm-model` (private). Work was done on an
 HP Victus 16 laptop (Ubuntu, kernel 6.8, RTX 4060 Laptop 8 GB, 31 GB RAM, Python 3.10 user-site packages).
 
 This file is the hand-over: what exists, what was measured, which data and models were used, what is still open.
@@ -53,6 +53,10 @@ recognition, which is the hard part of putting Q in front of Egyptian visitors.
   (one call for Whisper / Cohere / Munsit), `live_arabic_web.py --model cohere|munsit --brain ...` (§10b).
 - Q's voice: `asr/tts_backends.py` (VoiceTut-TTS local in its own venv, Munsit Faseeh cloud, Piper),
   `live_arabic_web.py --speak`, `q_yanshee.py --voice voicetut:NAME`; measurements, verdict and run commands in §10c.
+
+### 2026-11-04
+- The Yanshee's own microphone and speakers as the pipeline's audio (`asr/robot_audio.py`, `live_arabic_web.py --robot IP`);
+  the PC keeps running the models. Robot facts, the ssh/ALSA pitfalls and measurements in §10d.
 
 ## 3. The laptop microphone: what is true
 
@@ -387,6 +391,58 @@ for speed (fewer diffusion steps; not measured here); `--tts-device cpu` runs bu
 the recogniser and the voice; wait until the page's status line shows `voice: ...` before pressing Start. The page's
 "play Q's voice" checkbox silences the replies without stopping the text.
 
+## 10d. Q on the robot's own microphone and speakers (2026-11-04)
+
+The Yanshee (192.168.89.99 on the same Wi-Fi) is now the microphone and the loudspeaker of the pipeline while this PC keeps
+running the recogniser, the brain and the voice:
+```
+python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan --robot 192.168.89.99
+python3 asr/robot_audio.py 192.168.89.99 --record 5 out.wav | --play file.wav | --latency | --volume 70     # the pieces on their own
+```
+The web page (http://127.0.0.1:8765) becomes a monitor: it shows what the robot heard and what Q answered, with no Start button,
+plus a **robot volume** slider (0-100, applied on release through the robot's REST API; every open page follows).
+Options: `--robot-volume N` (0-100 at start, default 100 = max, set only if the robot is not there already),
+`--robot-tail S` (microphone stays muted this long after Q stops, default 0.6),
+`--robot-user/--robot-password` (default pi/raspberry, the factory login that yanshee_sim's tools also use; or `YANSHEE_PASSWORD`).
+
+**What the robot is** (over ssh): Raspberry Pi 3B, Raspbian 9, kernel 4.14, Python 3.5, 875 MB RAM with about 170 MB free, one
+sound card (Microsemi ZL380xx codec `snd_microsemi_dac`, capture and playback; 1 microphone, 2 speakers). `/etc/asound.conf`
+makes `default` a dmix (48 kHz stereo) + dsnoop (48 kHz mono) pair, so several processes can share the card. The REST API on
+port 9090 has the volume (`/v1/devices/volume`) and the Chinese cloud voice services (`/v1/voice/asr|iat|tts`), but nothing that
+streams the microphone or plays our PCM with low latency, hence ssh. `sshpass` is needed on the PC (`sudo apt install sshpass`).
+
+**How it works** (`asr/robot_audio.py`):
+- One ssh connection, multiplexed (ControlMaster): the microphone stream and the player are two sessions on it. A second full
+  ssh handshake costs 4-5 s of the Pi's CPU and starves its audio processes (aplay xruns were seen when a test opened one), so
+  anything else that talks to the robot during a session should reuse the socket (`-o ControlPath=/tmp/qy-ssh-%C`).
+- Microphone: `arecord -D default -r 16000` on the robot streams raw PCM; the frames go into the same queue the browser page
+  feeds, so VAD, recogniser and brain are unchanged.
+- Speakers: a 50-line pacer (`q_player.py`, copied to /home/pi at start) keeps one `aplay` fed with silence and plays whatever
+  PCM arrives, at once; a fresh aplay session per sentence would have cost 0.6-1.5 s each. 24 kHz mono; other rates are
+  resampled on the PC. If the player dies it is restarted at the next reply.
+- Both run as root through the Pi's passwordless sudo. The robot's own services are root and open dmix/dsnoop too; ALSA's
+  shared-memory objects belong to whoever opened them first, mode 600, so a player running as `pi` was refused ("unable to
+  create IPC semaphore ... Permission denied") the moment the robot played its own "adjust volume" tip. As root, the robot's
+  sounds and ours mix (verified: the tip plays in 0.9 s next to the running player).
+- Echo: the robot hears its own speakers at about -42 dBFS (room floor -57 dBFS), loud enough to trigger the VAD, so the
+  microphone is gated from the moment a reply is sent until it has sounded plus the tail, using the measured send -> sound ->
+  microphone lag of 0.85 s (`--latency`). In three runs none of Q's own words came back as a transcript.
+- Volume changes through the REST API make the robot play a 0.6 s tip sound each time; the microphone is gated for it.
+  Verified 2026-11-04: slider 80 -> robot reads 80, slider to the end -> 100; the pipeline starts at 100 without a change.
+- Shutdown: Ctrl-C or `kill PID` (SIGTERM is handled) closes the link in about 3 s; `arecord`/`q_player` leftovers on the Pi
+  are killed at the next start.
+
+**Measured (2026-11-04)**:
+- Far-field pickup works: the microphone picked up people talking in the room well enough for Cohere to transcribe them, and
+  a question played through the robot's own speaker at volume 70 was recognised and answered on the right row (founder).
+- Voice on the robot: VoiceTut's first chunk 1.0-2.0 s after the text reply, as before, plus about 0.5 s until it sounds.
+- ssh on the Pi: master connection 4.6 s, extra session 0.24 s; the microphone stream costs the Pi nothing visible (load 0.5-0.8).
+
+**Open / what this showed**: Q answers everything it hears. With a room microphone every sentence of a nearby conversation got
+a reply (mostly the fallback line). Before a demo the brain needs a wake word ("يا كيو" exists in `q_yanshee.py` but
+`live_arabic_web.py --brain` does not use it) or push-to-talk; see §11 item 8. Still to do: the user's own voice in front of the
+robot; pick the volume; the robot's head/arm gestures while it talks (yanshee_sim) are a separate project.
+
 ## 11. Open items / suggested next steps
 
 1. Done 2026-11-03: Cohere + Sygma is `--model cohere` in `live_arabic_web.py` (Whisper stays the default, Munsit
@@ -403,4 +459,7 @@ the recogniser and the voice; wait until the page's status line shows `voice: ..
 7. Voice (10c): listen to `asr/tts_samples/` and pick the VoiceTut speaker; run the browser page with
    `--speak voicetut:NAME` and your own voice; check the Munsit credit balance on app.munsit.com (the API does not
    report it) and ask Munsit whether an Egyptian Faseeh voice is coming; for the robot, play the reply WAVs on the
-   Yanshee instead of in the browser.
+   Yanshee instead of in the browser. (Done 2026-11-04: `--robot IP`, §10d.)
+8. Robot (10d): add a wake word to the live brain (`--wake "يا كيو"`: answer only a phrase that starts with it, or anything
+   for N seconds after it) or push-to-talk, otherwise Q answers the whole room; test with your own voice in front of the
+   robot and settle `--robot-volume`; then gestures while talking.

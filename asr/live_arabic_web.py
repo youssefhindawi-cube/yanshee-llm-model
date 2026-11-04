@@ -7,6 +7,7 @@
   python3 asr/live_arabic_web.py --model munsit --brain Q_Brain_Brief_Yanshee_ar.md   # same, cloud recogniser
   python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan    # spoken replies (local Egyptian voice)
   python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak munsit:Fares       # spoken replies (cloud voice)
+  python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan --robot 192.168.89.99   # the robot's microphone and speakers (see robot_audio.py)
 
 The web page captures the microphone with the browser's own audio stack (device picker, optional noise
 suppression and gain control), streams 16 kHz PCM to this script, and shows the live transcript with proper
@@ -19,6 +20,7 @@ import io
 import json
 import os
 import queue
+import signal
 import sys
 import threading
 import time
@@ -62,6 +64,7 @@ HTML = r"""<!doctype html>
   <select id="mic"><option value="">default microphone</option></select>
   <label><input type="checkbox" id="proc" checked> browser noise suppression + auto gain</label>
   <label id="voicebox" hidden><input type="checkbox" id="voice" checked> play Q's voice</label>
+  <label id="volbox" hidden>robot volume <input type="range" id="vol" min="0" max="100" step="5" style="vertical-align: middle"> <span id="volv"></span></label>
   <div id="meter"><div id="level"></div></div>
   <button id="clear" style="margin-left:auto">Clear</button>
 </div>
@@ -81,6 +84,7 @@ function playNext() {
   a.play().catch(done);
 }
 function setStatus(t) { $('status').textContent = t; }
+function showVolume(v) { $('vol').value = v; $('volv').textContent = v; }
 async function listMics() {
   try {
     const devs = await navigator.mediaDevices.enumerateDevices();
@@ -110,11 +114,19 @@ function connectEvents() {
       const first = $('finals').firstChild; if (first) first.insertAdjacentElement('afterend', d); else $('finals').prepend(d);
     }
     else if (ev.type === 'audio') {
-      if ($('voice').checked) { aq.push(ev.url); playNext(); }
+      if (ev.url && $('voice').checked) { aq.push(ev.url); playNext(); }
       const who = document.querySelector('.reply[data-id="' + ev.id + '"] .who');
       if (who && !who.textContent.includes('🔊')) who.textContent += '   🔊 ' + ev.gen_s.toFixed(1) + 's';
     }
-    else if (ev.type === 'status') { setStatus(ev.text); if (ev.model) $('model').textContent = ev.model; if (ev.voice) $('voicebox').hidden = false; }
+    else if (ev.type === 'status') {
+      setStatus(ev.text); if (ev.model) $('model').textContent = ev.model; if (ev.voice && !ev.robot) $('voicebox').hidden = false;
+      if (ev.robot) {                                      // the robot is the microphone and the speakers: nothing to press here
+        ['start', 'stop', 'mic'].forEach(id => $(id).hidden = true); $('proc').parentElement.hidden = true; $('voicebox').hidden = true;
+        setStatus('microphone and speakers: the Yanshee at ' + ev.robot + '  ·  this page only shows what it hears and says');
+        if (ev.volume !== undefined && ev.volume !== null) { $('volbox').hidden = false; showVolume(ev.volume); }
+      }
+    }
+    else if (ev.type === 'volume') { showVolume(ev.value); if (ev.error) setStatus('robot volume: ' + ev.error); }
   };
   es.onerror = () => setStatus('lost connection to the Python script (is it still running?)');
 }
@@ -148,6 +160,8 @@ async function stop() {
   setStatus('stopped');
 }
 $('start').onclick = start; $('stop').onclick = stop; $('clear').onclick = () => { $('finals').innerHTML = ''; $('partial').textContent = ''; };
+$('vol').oninput = () => { $('volv').textContent = $('vol').value; };          // live number while dragging
+$('vol').onchange = () => fetch('/control', { method: 'POST', body: JSON.stringify({ cmd: 'volume', value: +$('vol').value }) });   // on release: set it on the robot
 connectEvents(); listMics();
 </script></body></html>
 """
@@ -158,7 +172,8 @@ class Hub:
     def __init__(self):
         self.audio = queue.Queue()
         self.clients, self.history, self.lock = [], [], threading.Lock()
-        self.model_label, self.voice_label = "", ""
+        self.model_label, self.voice_label, self.robot_label = "", "", ""
+        self.robot, self.volume = None, None
         self.tts_q, self.sounds, self.n_reply, self.n_sound = queue.Queue(), collections.OrderedDict(), 0, 0
 
     def add_sound(self, data):
@@ -202,7 +217,7 @@ def make_handler(hub):
                 self.end_headers()
                 q = hub.subscribe()
                 try:
-                    self.wfile.write(("data: " + json.dumps({"type": "status", "text": "connected", "model": hub.model_label, "voice": hub.voice_label}, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                    self.wfile.write(("data: " + json.dumps({"type": "status", "text": "connected", "model": hub.model_label, "voice": hub.voice_label, "robot": hub.robot_label, "volume": hub.volume}, ensure_ascii=False) + "\n\n").encode("utf-8"))
                     for ev in hub.history:
                         self.wfile.write(("data: " + json.dumps(ev, ensure_ascii=False) + "\n\n").encode("utf-8"))
                     self.wfile.flush()
@@ -249,7 +264,11 @@ def make_handler(hub):
                     msg = json.loads(data.decode("utf-8"))
                 except ValueError:
                     msg = {}
-                hub.audio.put(msg)
+                if msg.get("cmd") == "volume":
+                    if hub.robot is not None:
+                        threading.Thread(target=set_robot_volume, args=(hub, msg.get("value")), daemon=True).start()
+                else:
+                    hub.audio.put(msg)
             self.send_response(204)
             self.end_headers()
     return Handler
@@ -287,8 +306,20 @@ def load_q_brain(path, internal=False):
     return {"rules": rules, "fallback": fallback, "best_answer": q_yanshee.best_answer, "n": len(rules)}
 
 
-def speaker(hub, tts, log):
-    """Voice thread: synthesise each reply (sentence by sentence when the engine can) and send the chunks to the page."""
+def set_robot_volume(hub, value):
+    """The page's slider: set the robot's speaker volume (its REST API; the robot plays a short tip sound) and tell every page."""
+    try:
+        hub.volume = hub.robot.set_volume(max(0, min(100, int(value))))
+        print("    robot volume: %s" % hub.volume, flush=True)
+        hub.publish({"type": "volume", "value": hub.volume})
+    except Exception as e:
+        print("    robot volume failed: %s" % e, flush=True)
+        hub.publish({"type": "volume", "value": hub.volume, "error": str(e)})
+
+
+def speaker(hub, tts, log, robot=None):
+    """Voice thread: synthesise each reply (sentence by sentence when the engine can) and send the chunks to the page, or
+    to the robot's speakers (robot = RobotAudio), which also gates the robot's microphone while it talks."""
     while True:
         rid, text = hub.tts_q.get()
         t, n, secs, first = time.time(), 0, 0.0, None
@@ -297,9 +328,14 @@ def speaker(hub, tts, log):
                 n += 1
                 secs += len(pcm) / sr
                 first = first or (time.time() - t)
-                sid = hub.add_sound(wav_bytes(sr, pcm))
-                hub.publish({"type": "audio", "id": rid, "url": "/reply_audio/%d.wav" % sid, "audio_s": round(len(pcm) / sr, 2), "gen_s": round(time.time() - t, 2)})
-            line = "voice: %.1f s of audio in %.2f s, %d chunk(s), first chunk after %.2f s" % (secs, time.time() - t, n, first or 0)
+                ev = {"type": "audio", "id": rid, "audio_s": round(len(pcm) / sr, 2), "gen_s": round(time.time() - t, 2)}
+                if robot is not None:
+                    robot.play(sr, pcm)
+                    ev["where"] = "robot"
+                else:
+                    ev["url"] = "/reply_audio/%d.wav" % hub.add_sound(wav_bytes(sr, pcm))
+                hub.publish(ev)
+            line = "voice: %.1f s of audio in %.2f s, %d chunk(s), first chunk after %.2f s%s" % (secs, time.time() - t, n, first or 0, ", on the robot" if robot is not None else "")
             print("    " + line, flush=True)
             if log:
                 log.write("    %s\n" % line)
@@ -360,7 +396,7 @@ def worker(hub, asr, det, a, log, brain=None, tts=None):
                 if a.dump:
                     ambient, ambient_left = [], 10 * RATE
                 hub.publish({"type": "status", "text": "listening on: %s  ·  %s" % (item.get("device", "?"), det.name)})
-                print("browser started: %s @ %s Hz" % (item.get("device"), item.get("rate")), flush=True)
+                print("audio in: %s @ %s Hz" % (item.get("device"), item.get("rate")), flush=True)
             elif item.get("cmd") == "stop":
                 if talking and buf and voiced * FRAME_MS >= MIN_VOICED_MS:
                     finish(buf, below)
@@ -421,6 +457,11 @@ def main():
     ap.add_argument("--speak", help="with --brain: speak the replies. voicetut[:Speaker] (local Egyptian, e.g. voicetut:Hassan; names: Ahmed, Ali, Hassan, Karim, Mahmoud, Mohammed, Mostafa, Ramy, Shaker, Tareq, Yehia, Youssef, Hadeer, Hanan, ...), munsit[:Voice] (cloud, e.g. munsit:Fares), piper[:voice]")
     ap.add_argument("--tts-device", default=None, help="for --speak voicetut: cuda (default) or cpu; use cpu if the GPU is full")
     ap.add_argument("--tts-steps", type=int, default=32, help="for --speak voicetut: diffusion steps (16 = faster, 32 = default quality)")
+    ap.add_argument("--robot", metavar="IP", help="use the Yanshee's microphone (and, with --speak, its speakers) instead of the browser's; this PC still runs the models")
+    ap.add_argument("--robot-user", default=None, help="ssh user on the robot (default pi)")
+    ap.add_argument("--robot-password", default=None, help="ssh password on the robot (default: YANSHEE_PASSWORD or the factory one)")
+    ap.add_argument("--robot-volume", type=int, default=100, help="the robot's speaker volume 0-100 at start (default 100 = max; set through its REST API only if it differs; the page has a slider too)")
+    ap.add_argument("--robot-tail", type=float, default=0.6, help="seconds the robot's microphone stays muted after Q finishes talking")
     ap.add_argument("--no-adapter", action="store_true", help="plain whisper-large-v3 without the Egyptian adapter")
     ap.add_argument("--language", default="ar", help="ar (default), en, ... or auto")
     ap.add_argument("--device", default=None, help="cuda or cpu (default: cuda if available)")
@@ -437,6 +478,9 @@ def main():
     ap.add_argument("--dump", help="debug: save 10 s of ambient audio after Start and every phrase as WAV files in this folder")
     a = ap.parse_args()
 
+    def _term(*_):                                   # `kill PID` (and a service stop) shuts down like Ctrl-C: robot and voice closed
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, _term)
     import torch
     device = a.device or ("cuda" if torch.cuda.is_available() else "cpu")
     if device == "cpu" and a.partial_every < 4:
@@ -461,7 +505,20 @@ def main():
         print("voice:", tts.name, flush=True)
         model_label += "  ·  voice: " + tts.name
         hub.voice_label = tts.name
-        threading.Thread(target=speaker, args=(hub, tts, None), daemon=True).start()
+    robot = None
+    if a.robot:
+        from robot_audio import RobotAudio
+        kw = {k: v for k, v in (("user", a.robot_user), ("password", a.robot_password)) if v}
+        robot = RobotAudio(a.robot, sink=hub.audio.put, tail=a.robot_tail, **kw)
+        robot.connect(player=tts is not None)
+        hub.volume = robot.get_volume()
+        if hub.volume != max(0, min(100, a.robot_volume)):
+            hub.volume = robot.set_volume(a.robot_volume)
+        hub.robot, hub.robot_label = robot, a.robot
+        model_label += "  ·  robot: " + a.robot
+        print("robot: microphone%s at %s (volume %s)" % (" and speakers" if tts is not None else "", a.robot, hub.volume), flush=True)
+    if tts is not None:
+        threading.Thread(target=speaker, args=(hub, tts, None, robot), daemon=True).start()
     det = SpeechDetector(a.threshold, a.vad)
     print("phrase detection:", det.name)
     print("noise handling: %s%s" % ("high-pass %.0f Hz" % a.highpass if a.highpass > 0 else "no high-pass", ", spectral gate" if not a.no_denoise else ", no gate"))
@@ -470,7 +527,7 @@ def main():
     threading.Thread(target=worker, args=(hub, asr, det, a, log, brain, tts), daemon=True).start()
     srv = ThreadingHTTPServer(("127.0.0.1", a.port), make_handler(hub))
     srv.daemon_threads = True
-    print("ready: open http://127.0.0.1:%d in Edge or Chrome and press Start  (Ctrl-C here to quit)" % a.port, flush=True)
+    print("ready: open http://127.0.0.1:%d in Edge or Chrome and %s  (Ctrl-C here to quit)" % (a.port, "watch (the robot is listening already)" if robot is not None else "press Start"), flush=True)
     try:
         srv.serve_forever()
     except KeyboardInterrupt:
@@ -479,6 +536,8 @@ def main():
         srv.server_close()
         if log:
             log.close()
+        if robot is not None:
+            robot.close()
         if tts is not None and hasattr(tts, "close"):
             tts.close()
 

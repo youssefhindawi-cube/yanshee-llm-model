@@ -13,6 +13,7 @@ built around it. Private: `Q_Brain_Brief_Yanshee.md` / `.pdf` contain an interna
 | `asr/live_arabic_web.py` | Live Egyptian-Arabic speech-to-text in the browser. `--model whisper|cohere|munsit` picks the recogniser; `--brain Q_Brain_Brief_Yanshee_ar.md` turns it into Q: each spoken question is answered in Egyptian Arabic as text; `--speak voicetut:Hassan` (local) or `--speak munsit:Fares` (cloud) also speaks the answer in the browser, muting the microphone while Q talks. |
 | `asr/backends.py` | The three recognisers behind one interface (Whisper + adapter, Cohere + Sygma in bfloat16, Munsit cloud). |
 | `asr/tts_backends.py` | The voices behind one interface: `voicetut[:Speaker]` (VoiceTut-TTS, local Egyptian, 19 speakers: 12 male, 7 female), `munsit[:Voice]` (Munsit Faseeh cloud TTS, Fusha/Gulf voices only), `piper[:voice]` (offline baseline). `python3 asr/tts_backends.py voicetut:Hassan "النص" out.wav` makes a file. |
+| `asr/robot_audio.py` | The Yanshee's microphone and speakers over the network for the live pipeline (`live_arabic_web.py --robot IP`): ssh to the robot, `arecord` streams its mic to the PC, a small player on the Pi sounds Q's replies, mic gated while Q talks. Also `--record`, `--play`, `--latency`, `--volume` on their own. |
 | `asr/voicetut_worker.py` | VoiceTut runs in its own virtual environment (it needs transformers 5); this worker is started by `tts_backends.py` and streams sentences back over a pipe. |
 | `scripts/setup_voicetut.sh` | Creates `~/.venvs/voicetut` (OmniVoice + voicetut-tts, sharing the laptop's CUDA PyTorch) and fetches the 2.5 GB model. |
 | `asr/tts_samples/` | The same Q greeting spoken by every voice tested (listen before choosing). |
@@ -35,6 +36,7 @@ built around it. Private: `Q_Brain_Brief_Yanshee.md` / `.pdf` contain an interna
 pip install --user -r requirements.txt      # torch first, from pytorch.org, for your CUDA
 scripts/download_models.sh                  # Piper voices + Vosk models (~570 MB)
 sudo apt install espeak                     # optional fallback voice
+sudo apt install sshpass                    # for --robot (ssh to the Yanshee's Raspberry Pi)
 scripts/setup_voicetut.sh                   # optional: VoiceTut Egyptian voice in its own venv (~/.venvs/voicetut) + 2.5 GB model
 ```
 
@@ -51,6 +53,7 @@ python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.m
 python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan   # ... and in an Egyptian voice (local)
 python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak munsit:Fares    # ... cloud voice (Fusha; needs MUNSIT_API_KEY)
 python3 q_yanshee.py --md Q_Brain_Brief_Yanshee_ar.md --text --voice voicetut:Hassan   # keyboard in, Egyptian voice out through the speakers
+python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan --robot 192.168.89.99   # the robot's own mic and speakers (volume slider on the page); this PC runs the models
 python3 asr/live_arabic.py --wav clip.m4a   # transcribe a recording through the live pipeline
 python3 asr/test_arabic_whisper.py asr/clips cuda
 ```
