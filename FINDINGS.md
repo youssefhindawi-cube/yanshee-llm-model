@@ -470,6 +470,25 @@ a ring give 360°. Options, cheapest first:
 more multiplexed command); PC side: when the VAD opens a phrase, take the current angle and `PUT /v1/servos/angles
 {"NeckLR": ...}` (REST) so the robot turns to the voice before Q answers; mic input from the array instead of the Timberwolf.
 
+## 10f. The wake word: Q answers only "يا كيو" (2026-11-04)
+
+Needed because the robot's microphone hears the whole room (10d). `q_yanshee.wake_split(text)` is shared by the keyboard/mic
+modes (`--wake`) and the live pipeline, where it is on by default with `--brain` (`--no-wake` answers everything):
+- A sentence is for Q when it contains the wake word. The regex takes "Hey Q" and "يا كيو" plus what the recognisers make of
+  the Egyptian "يا كيو": after "يا" one consonant (ك, ق or ت), up to four vowel letters, an optional ب, and no further Arabic
+  letter, so "ياكي و", "ياكيو", "يا كيوب", "ياكويو", "ياتيو", "ياتي" match and "يا كابتن", "يا كمان", "كيوب بتعمل إيه" do not;
+  a bare "كيو" as its own word also counts ("كيوب" does not). Arabic punctuation (، ؟) is not a letter. 25 text cases pass.
+- The wake word is cut out before the brain matches ("يا كيو مكتبكم فين" -> "مكتبكم فين"); "يا كيو" alone gets "أيوه، اتفضل." and
+  opens the follow-up window; after every answer the window (`--wake-window`, 15 s) lets the next sentence through without
+  the wake word, so a short conversation flows. Sentences outside are still transcribed and shown on the page dimmed with
+  "not for Q", and logged as such.
+- Test (fake browser client, Piper-spoken sequence, Cohere + VoiceTut on the PC, robot offline): "كيوب بتعمل إيه" and "مكتبكم فين"
+  before any wake word -> not for Q; "يا كيو" -> wake reply; "مكتبكم فين" inside the window -> answered; a sentence 20 s later ->
+  not for Q; "يا كيو مين اللي أسس الشركة" -> founder; "أهلا يا كيو إزيك" -> greeting; "يا كيو مكتبكم فين" -> office.
+  Cohere's spellings of the Piper voice's "يا كيو" were ياكي و / ياكويو / ياتي / ياتيو, which is why the regex is that loose;
+  a human Egyptian "يا كيو" should land closer, but check the "not for Q" lines on the page after the first real session and
+  widen the regex if a new spelling shows up.
+
 ## 11. Open items / suggested next steps
 
 1. Done 2026-11-03: Cohere + Sygma is `--model cohere` in `live_arabic_web.py` (Whisper stays the default, Munsit
@@ -487,8 +506,7 @@ more multiplexed command); PC side: when the VAD opens a phrase, take the curren
    `--speak voicetut:NAME` and your own voice; check the Munsit credit balance on app.munsit.com (the API does not
    report it) and ask Munsit whether an Egyptian Faseeh voice is coming; for the robot, play the reply WAVs on the
    Yanshee instead of in the browser. (Done 2026-11-04: `--robot IP`, §10d.)
-8. Robot (10d): add a wake word to the live brain (`--wake "يا كيو"`: answer only a phrase that starts with it, or anything
-   for N seconds after it) or push-to-talk, otherwise Q answers the whole room; test with your own voice in front of the
-   robot and settle `--robot-volume`; then gestures while talking.
+8. Robot (10d): wake word done 2026-11-04 (10f, on by default). Still: test with your own voice in front of the robot, watch
+   the "not for Q" lines for unexpected spellings of "يا كيو", settle `--robot-volume`; then gestures while talking.
 9. Looking toward the speaker (10e): needs a USB microphone array (ReSpeaker XVF3000 or similar) on the Pi; the built-in
    single microphone cannot give a direction. Vision (face detection) is the only no-hardware alternative.

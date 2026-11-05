@@ -56,6 +56,7 @@ HTML = r"""<!doctype html>
   .final { font-size: 30px; line-height: 1.7; padding: 8px 14px; border-bottom: 1px solid #8883; display: flex; gap: 16px; align-items: baseline; }
   .final .meta { direction: ltr; font-size: 12px; opacity: .55; font-family: monospace; white-space: nowrap; margin-left: auto; }
   .final.unclear { opacity: .5; }
+  .final.ignored { opacity: .45; }  .final.ignored .meta::after { content: "  ·  not for Q"; }
 </style></head>
 <body>
 <h1>Live Arabic transcription · Whisper large-v3 <span id="model"></span></h1>
@@ -101,7 +102,7 @@ function connectEvents() {
     else if (ev.type === 'partial') { $('partial').textContent = ev.text; }
     else if (ev.type === 'final') {
       $('partial').textContent = '';
-      const d = document.createElement('div'); d.className = 'final ar' + (ev.unclear ? ' unclear' : '');
+      const d = document.createElement('div'); d.className = 'final ar' + (ev.unclear ? ' unclear' : '') + (ev.ignored ? ' ignored' : '');
       d.innerHTML = '<span class="text"></span><span class="meta"></span>';
       d.querySelector('.text').textContent = (ev.unclear ? '؟ ' : '') + ev.text;
       d.querySelector('.meta').textContent = ev.time + ' · ' + ev.audio_s.toFixed(1) + 's audio · ' + ev.proc_s.toFixed(2) + 's · conf ' + (ev.conf === undefined ? '-' : ev.conf.toFixed(2)) + (ev.unclear ? ' (unclear)' : '');
@@ -298,12 +299,15 @@ def save_wav(path, audio_int16):
 
 
 def load_q_brain(path, internal=False):
-    """The keyword brain from q_yanshee.py (project root), with its Arabic-aware normalisation."""
+    """The keyword brain from q_yanshee.py (project root), with its Arabic-aware normalisation and wake word."""
+    import re
     root = os.path.dirname(HERE_DIR)
     sys.path.insert(0, root)
     import q_yanshee
     rules, fallback = q_yanshee.load_brain(path, internal=internal)
-    return {"rules": rules, "fallback": fallback, "best_answer": q_yanshee.best_answer, "n": len(rules)}
+    lang = "ar" if re.search("[\u0600-\u06ff]", fallback) else "en"
+    return {"rules": rules, "fallback": fallback, "best_answer": q_yanshee.best_answer, "n": len(rules),
+            "wake_split": q_yanshee.wake_split, "wake_reply": q_yanshee.WAKE_REPLY[lang], "wake_title": "Wake · يا كيو" if lang == "ar" else "Wake · Hey Q"}
 
 
 def set_robot_volume(hub, value):
@@ -351,6 +355,7 @@ def worker(hub, asr, det, a, log, brain=None, tts=None):
     pre = collections.deque(maxlen=300 // FRAME_MS)
     talking, buf, above, below, unsure, last_partial, voiced, status_t = False, [], 0, 0, 0, 0.0, 0, 0.0
     ambient, ambient_left = [], 0            # --dump: the first 10 s after Start, VAD or not
+    attention = {"until": 0.0}               # wake word: after "يا كيو" (or an answer) Q keeps listening this long without it
     if a.dump:
         os.makedirs(a.dump, exist_ok=True)
 
@@ -368,17 +373,26 @@ def worker(hub, asr, det, a, log, brain=None, tts=None):
             return
         ev = {"type": "final", "text": text, "time": time.strftime("%H:%M:%S"), "audio_s": len(audio) / RATE, "proc_s": time.time() - t,
               "conf": round(asr.last_conf, 3), "unclear": asr.last_conf < a.min_conf}
+        question = text
+        if brain is not None and not a.no_wake:   # only answer when addressed ("يا كيو ...") or shortly after the last exchange
+            addressed, question = brain["wake_split"](text)
+            ev["ignored"] = not addressed and time.time() > attention["until"]
         if a.dump:
             stamp = time.strftime("%H%M%S")
             save_wav(os.path.join(a.dump, "phrase_%s_raw.wav" % stamp), audio)
             save_wav(os.path.join(a.dump, "phrase_%s_clean.wav" % stamp), enhanced)
         hub.publish(ev)
-        print("[%s] %s   (%.1f s audio, %.2f s, conf %.2f%s)" % (ev["time"], text, ev["audio_s"], ev["proc_s"], ev["conf"], ", unclear" if ev["unclear"] else ""), flush=True)
+        print("[%s] %s   (%.1f s audio, %.2f s, conf %.2f%s%s)" % (ev["time"], text, ev["audio_s"], ev["proc_s"], ev["conf"], ", unclear" if ev["unclear"] else "",
+                                                               ", not for Q" if ev.get("ignored") else ""), flush=True)
         if log:
-            log.write("[%s] %s\n" % (ev["time"], text))
+            log.write("[%s] %s%s\n" % (ev["time"], text, "   (not for Q)" if ev.get("ignored") else ""))
             log.flush()
-        if brain is not None:                      # the Q brain: match the question, answer as text and (with --speak) as voice
-            title, answer = brain["best_answer"](text, brain["rules"], brain["fallback"])
+        if brain is not None and not ev.get("ignored"):   # the Q brain: match the question, answer as text and (with --speak) as voice
+            if not a.no_wake and not question.strip():      # "يا كيو" alone
+                title, answer = brain["wake_title"], brain["wake_reply"]
+            else:
+                title, answer = brain["best_answer"](question, brain["rules"], brain["fallback"])
+            attention["until"] = time.time() + a.wake_window
             hub.n_reply += 1
             hub.publish({"type": "reply", "id": hub.n_reply, "title": title.split(" · ")[0], "text": answer})
             print("    Q [%s]: %s" % (title, answer), flush=True)
@@ -454,6 +468,8 @@ def main():
     ap.add_argument("--model", default="whisper", choices=["whisper", "cohere", "munsit"], help="recogniser: whisper (default), cohere (local, best on noisy dialect), munsit (cloud)")
     ap.add_argument("--brain", help="Q brain Markdown (e.g. Q_Brain_Brief_Yanshee_ar.md): each final transcript is answered by Q as text")
     ap.add_argument("--internal", action="store_true", help="with --brain: also load the internal Part 2 answers (private tests only)")
+    ap.add_argument("--no-wake", action="store_true", help="with --brain: answer everything heard. Default: only sentences with the wake word (يا كيو / Hey Q), plus follow-ups within --wake-window")
+    ap.add_argument("--wake-window", type=float, default=15.0, help="seconds after a wake word or an answer during which Q answers without the wake word again (default 15)")
     ap.add_argument("--speak", help="with --brain: speak the replies. voicetut[:Speaker] (local Egyptian, e.g. voicetut:Hassan; names: Ahmed, Ali, Hassan, Karim, Mahmoud, Mohammed, Mostafa, Ramy, Shaker, Tareq, Yehia, Youssef, Hadeer, Hanan, ...), munsit[:Voice] (cloud, e.g. munsit:Fares), piper[:voice]")
     ap.add_argument("--tts-device", default=None, help="for --speak voicetut: cuda (default) or cpu; use cpu if the GPU is full")
     ap.add_argument("--tts-steps", type=int, default=32, help="for --speak voicetut: diffusion steps (16 = faster, 32 = default quality)")
@@ -495,8 +511,8 @@ def main():
         print("model ready:", asr.name)
     brain = load_q_brain(a.brain, a.internal) if a.brain else None
     if brain:
-        print("Q brain: %d answers from %s" % (brain["n"], os.path.basename(a.brain)))
-        model_label += "  ·  Q brain: " + os.path.basename(a.brain)
+        print("Q brain: %d answers from %s%s" % (brain["n"], os.path.basename(a.brain), "" if a.no_wake else "; answers only after the wake word (%s), %.0f s follow-up window" % (brain["wake_title"].split(" · ")[1], a.wake_window)))
+        model_label += "  ·  Q brain: " + os.path.basename(a.brain) + ("" if a.no_wake else "  ·  wake: " + brain["wake_title"].split(" · ")[1])
     tts = None
     if a.speak:
         if not brain:

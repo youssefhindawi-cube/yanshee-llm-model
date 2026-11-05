@@ -371,7 +371,23 @@ def selftest(rules, fallback):
     return bad == 0
 
 
-WAKE = re.compile(r"\b(hey|hay|he|hi|hello|ok|okay)[ ,.!?-]*(q|queue|cue|kew)\b|(يا|هاي|اهلا|أهلا)\s*كيو", re.I)
+# "Hey Q" / "يا كيو", including what the recognisers make of it ("ياكي و", "يا كيوب", "ياكيو", "ياكويو", "ياتيو", "يا قيو"),
+# and a bare "كيو" that is its own word (not "كيوب"). Works on the raw text, before norm(). After "يا": one consonant
+# (ك, ق or ت), up to four vowel letters, an optional ب, and then no further Arabic letter ("يا كابتن", "يا كمان" fail).
+AR_LETTER = "[\u0621-\u063a\u0641-\u064a]"          # Arabic letters only (not ، ؟ or diacritics)
+WAKE = re.compile(r"\b(?:hey|hay|he|hi|hello|ok|okay)[ ,.!?-]*(?:q|queue|cue|kew)\b"
+                  r"|(?:يا|هاي|اهلا|أهلا|ya)\s*[كقت]\s*(?:[يىو]{1,4}ب?|ه)?(?!%s)"
+                  r"|(?<!%s)كيو(?!%s)" % (AR_LETTER, AR_LETTER, AR_LETTER), re.I)
+WAKE_REPLY = {"ar": "أيوه، اتفضل.", "en": "Yes?"}
+
+
+def wake_split(text):
+    """Was Q addressed? -> (True, the rest of the sentence) or (False, text). "يا كيو" alone gives (True, "")."""
+    m = WAKE.search(text)
+    if not m:
+        return False, text
+    rest = (text[:m.start()] + " " + text[m.end():]).strip(" ,.!?-،؟")
+    return True, rest
 
 
 def main():
@@ -427,13 +443,12 @@ def main():
             continue
         if not a.text:
             print("Heard:", heard)
-        m = WAKE.search(heard)
-        if a.wake and not m:
+        addressed, rest = wake_split(heard)
+        if a.wake and not addressed:
             continue                       # not addressed to Q
-        if m:                              # remove "Hey Q" so it is not mistaken for a greeting
-            rest = (heard[:m.start()] + " " + heard[m.end():]).strip(" ,.!?-")
+        if addressed:                      # remove "Hey Q" so it is not mistaken for a greeting
             if not rest:
-                speak("Yes?", yan)
+                speak(WAKE_REPLY["ar" if re.search("[\u0600-\u06ff]", fallback) else "en"], yan)
                 continue
             heard = rest
         title, answer = best_answer(heard, rules, fallback)
