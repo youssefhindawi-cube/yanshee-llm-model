@@ -12,3 +12,5 @@ dump/
 .live_arabic_16k.wav
 # API keys for the cloud adapters (never commit)
 .env
+# editor settings
+.vscode/
