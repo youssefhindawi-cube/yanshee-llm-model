@@ -8,6 +8,8 @@
   python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan    # spoken replies (local Egyptian voice)
   python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak munsit:Fares       # spoken replies (cloud voice)
   python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan --robot 192.168.89.99   # the robot's microphone and speakers (see robot_audio.py)
+  # with --brain the TV layer is on: at start it finds a TV on the network by itself (--tv off / IP / name); rows with a TV column
+  # (e.g. the greeting -> tv_media/welcome.mp4) play on it while Q speaks. No TV: a warning, and everything else runs (see q_tv.py)
 
 The web page captures the microphone with the browser's own audio stack (device picker, optional noise
 suppression and gain control), streams 16 kHz PCM to this script, and shows the live transcript with proper
@@ -67,6 +69,7 @@ HTML = r"""<!doctype html>
   <label id="voicebox" hidden><input type="checkbox" id="voice" checked> play Q's voice</label>
   <label id="volbox" hidden>robot volume <input type="range" id="vol" min="0" max="100" step="5" style="vertical-align: middle"> <span id="volv"></span></label>
   <div id="meter"><div id="level"></div></div>
+  <span id="tv" hidden></span>
   <button id="clear" style="margin-left:auto">Clear</button>
 </div>
 <div id="status">Press Start, then allow the microphone if asked. Best results with a headset or a microphone close to your mouth; grey lines with ؟ are low-confidence guesses.</div>
@@ -127,6 +130,8 @@ function connectEvents() {
         if (ev.volume !== undefined && ev.volume !== null) { $('volbox').hidden = false; showVolume(ev.volume); }
       }
     }
+    else if (ev.type === 'tvstate') { $('tv').hidden = false; $('tv').textContent = (ev.connected ? '📺 TV: ' : '⚠️ ') + ev.text; $('tv').style.color = ev.connected ? '' : '#b42318'; }
+    else if (ev.type === 'tv') { $('tv').hidden = false; $('tv').title = ev.text; }
     else if (ev.type === 'volume') { showVolume(ev.value); if (ev.error) setStatus('robot volume: ' + ev.error); }
   };
   es.onerror = () => setStatus('lost connection to the Python script (is it still running?)');
@@ -219,6 +224,8 @@ def make_handler(hub):
                 q = hub.subscribe()
                 try:
                     self.wfile.write(("data: " + json.dumps({"type": "status", "text": "connected", "model": hub.model_label, "voice": hub.voice_label, "robot": hub.robot_label, "volume": hub.volume}, ensure_ascii=False) + "\n\n").encode("utf-8"))
+                    if getattr(hub, "tv_state", None):
+                        self.wfile.write(("data: " + json.dumps(dict(type="tvstate", **hub.tv_state), ensure_ascii=False) + "\n\n").encode("utf-8"))
                     for ev in hub.history:
                         self.wfile.write(("data: " + json.dumps(ev, ensure_ascii=False) + "\n\n").encode("utf-8"))
                     self.wfile.flush()
@@ -307,7 +314,7 @@ def load_q_brain(path, internal=False):
     rules, fallback = q_yanshee.load_brain(path, internal=internal)
     lang = "ar" if re.search("[\u0600-\u06ff]", fallback) else "en"
     return {"rules": rules, "fallback": fallback, "best_answer": q_yanshee.best_answer, "n": len(rules),
-            "wake_split": q_yanshee.wake_split, "wake_reply": q_yanshee.WAKE_REPLY[lang], "wake_title": "Wake · يا كيو" if lang == "ar" else "Wake · Hey Q"}
+            "wake_split": q_yanshee.wake_split, "tv_cell": q_yanshee.tv_cell, "wake_reply": q_yanshee.WAKE_REPLY[lang], "wake_title": "Wake · يا كيو" if lang == "ar" else "Wake · Hey Q"}
 
 
 def set_robot_volume(hub, value):
@@ -396,6 +403,12 @@ def worker(hub, asr, det, a, log, brain=None, tts=None):
             hub.n_reply += 1
             hub.publish({"type": "reply", "id": hub.n_reply, "title": title.split(" · ")[0], "text": answer})
             print("    Q [%s]: %s" % (title, answer), flush=True)
+            if getattr(hub, "tv", None) is not None:     # the TV layer: this row's video/image on the TV, with the voice
+                from q_tv import parse_action
+                note = hub.tv.act(parse_action(brain["tv_cell"](title, brain["rules"])))
+                if note:
+                    print("    " + note, flush=True)
+                    hub.publish({"type": "tv", "text": note})
             if tts is not None:
                 hub.tts_q.put((hub.n_reply, answer))
             if log:
@@ -478,6 +491,10 @@ def main():
     ap.add_argument("--robot-password", default=None, help="ssh password on the robot (default: YANSHEE_PASSWORD or the factory one)")
     ap.add_argument("--robot-volume", type=int, default=100, help="the robot's speaker volume 0-100 at start (default 100 = max; set through its REST API only if it differs; the page has a slider too)")
     ap.add_argument("--robot-tail", type=float, default=0.6, help="seconds the robot's microphone stays muted after Q finishes talking")
+    ap.add_argument("--tv", default="auto", help="with --brain: the TV for each answer row's TV column (video/image in tv_media/). auto (default): find a TV on the network at start and keep looking if there is none; an IP; part of the TV's name; or off")
+    ap.add_argument("--tv-rescan", type=float, default=30, help="seconds between TV searches while none is found (default 30)")
+    ap.add_argument("--tv-media", default=None, help="folder with the TV files (default: tv_media/ next to the --brain file)")
+    ap.add_argument("--tv-port", type=int, default=8809, help="port this PC serves the TV files on (default 8809)")
     ap.add_argument("--no-adapter", action="store_true", help="plain whisper-large-v3 without the Egyptian adapter")
     ap.add_argument("--language", default="ar", help="ar (default), en, ... or auto")
     ap.add_argument("--device", default=None, help="cuda or cpu (default: cuda if available)")
@@ -502,6 +519,21 @@ def main():
     if device == "cpu" and a.partial_every < 4:
         a.partial_every = 4
     hub = Hub()
+    hub.tv, hub.tv_state = None, None
+    if a.brain and a.tv.lower() != "off":     # boot: search for a TV while the models load; everything runs with or without one
+        sys.path.insert(0, os.path.dirname(HERE_DIR))
+        from q_tv import TvCaster
+
+        def tv_state(connected, text):
+            hub.tv_state = {"connected": connected, "text": text}
+            hub.publish(dict(type="tvstate", **hub.tv_state))
+        try:
+            hub.tv = TvCaster(a.tv, a.tv_media or os.path.join(os.path.dirname(os.path.abspath(a.brain)), "tv_media"), port=a.tv_port,
+                              rescan=a.tv_rescan, log=lambda m: print(m, flush=True), on_state=tv_state).start()
+            hub.tv_state = {"connected": False, "text": "searching for a TV..."}
+            print("TV layer: looking for %s on the network while the models load" % ("a TV" if a.tv == "auto" else a.tv), flush=True)
+        except OSError as e:
+            print("WARNING: TV layer off, cannot serve files on port %d: %s. Q keeps running without the TV." % (a.tv_port, e), flush=True)
     if a.model == "whisper":
         asr = Transcriber(device, not a.no_adapter, a.beams)
         model_label = "+ Egyptian adapter" if not a.no_adapter else "(no adapter)"
@@ -554,6 +586,8 @@ def main():
             log.close()
         if robot is not None:
             robot.close()
+        if hub.tv is not None:
+            hub.tv.close()
         if tts is not None and hasattr(tts, "close"):
             tts.close()
 

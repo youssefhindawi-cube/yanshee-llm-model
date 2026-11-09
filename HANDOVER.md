@@ -81,6 +81,17 @@ python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.m
 python3 asr/live_arabic_web.py --model cohere --brain Q_Brain_Brief_Yanshee_ar.md --speak voicetut:Hassan --robot ROBOT_IP
 #   ^ the show configuration: the robot's mic and speakers, the laptop runs the models, page becomes a monitor with a volume slider
 #   --no-wake answers everything; --wake-window 15 is the follow-up window after a wake word
+#   TV layer (on by default with --brain): at start Q finds a TV on the network by itself (last TV used, else a scan:
+#   SSDP multicast + unicast and Samsung's port 9197), while the models load. A row's "التلفزيون (TV)" column (e.g. the
+#   greeting -> tv_media/welcome.mp4) is cast to it over DLNA while Q speaks. No TV: one WARNING, rescans every 30 s,
+#   speech and voice run as normal. --tv off | IP | part of the name. The page shows the TV state. (q_tv.py)
+
+# TV layer on its own, and making a TV video from an image (AVIF/PNG/JPG -> 1080p H.264 with fade and slow zoom)
+python3 q_tv.py --scan                                       # list the TVs on the network
+python3 q_tv.py tv_media/welcome.mp4                         # find a TV, play once   (q_tv.py --tv 192.168.1.6 stop)
+python3 scripts/build_tv_media.py IMAGE --out tv_media/NAME.mp4
+python3 q_yanshee.py --md Q_Brain_Brief_Yanshee_ar.md --text --voice none   # typed test, silent laptop, TV found automatically
+#   A Samsung asks once per new device whether to allow it (UPnP error 705 "Transport is locked" until someone presses Allow).
 
 # Robot audio pieces on their own
 python3 asr/robot_audio.py ROBOT_IP --record 5 out.wav | --play file.wav | --latency | --volume 70

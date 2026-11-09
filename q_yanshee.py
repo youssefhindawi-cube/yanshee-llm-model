@@ -14,6 +14,11 @@ Usage (on the Yanshee, or on a PC with --ip <robot-ip>):
   python3 q_yanshee.py --text --voice en_GB-jenny_dioco-medium   # laptop voice: any .onnx in ./voices, or "espeak"
   python3 q_yanshee.py --mic             # laptop only: listen with the laptop microphone (offline), speak with the laptop voice
   python3 q_yanshee.py --mic --ip 192.168.x.x   # listen with the laptop microphone, speak through the robot
+  python3 q_yanshee.py --md Q_Brain_Brief_Yanshee_ar.md --text --voice none   # silent typed test (TV found automatically)
+
+TV layer (on by default, --tv off to disable): at start Q looks for a TV on the network by itself (q_tv.py); rows of the quick-answer table may have a 4th column, "التلفزيون (TV)": a video or image in
+tv_media/ (e.g. welcome.mp4, or "welcome.mp4 loop"), or "stop". When that row answers, q_tv.py casts it to the TV
+over DLNA while Q speaks. See q_tv.py.
 
 Laptop voice: if the Piper package is installed (pip install piper-tts) and a voice model sits in ./voices,
 answers are spoken with that natural voice; otherwise espeak is used; otherwise answers are only printed.
@@ -86,14 +91,16 @@ def load_brain(md_path, internal=False):
             in_table = False
         if in_table and line.startswith("|"):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
-            if len(cells) < 3 or cells[0].lower() == "keywords" or set(cells[0]) <= set("-: "):
+            if len(cells) < 3 or cells[0].lower() == "keywords" or cells[0] == "الكلمات المفتاحية" or set(cells[0]) <= set("-: "):
                 continue
             keys, title, answer = cells[0], cells[1], cells[2]
+            tv = cells[3] if len(cells) > 3 else ""          # optional TV column: a file in tv_media/ to show, or "stop"
             if keys.startswith("(anything else)"):
                 fallback = answer
                 continue
             kws = [norm(k) for k in keys.split(",") if k.strip()]
-            rules.append({"title": title, "kws": kws, "answer": answer, "guard": title.startswith("Projects") or "المشاريع" in title})
+            rules.append({"title": title, "kws": kws, "answer": answer, "tv": tv,
+                          "guard": title.startswith("Projects") or "المشاريع" in title})
 
     if internal:
         part2 = False
@@ -113,6 +120,14 @@ def load_brain(md_path, internal=False):
     if not fallback:
         fallback = "I don't have that information. I can tell you about our history, vision and offices, or find a colleague who can help."
     return rules, fallback
+
+
+def tv_cell(title, rules):
+    """The TV column of the row best_answer() picked ("" when the row has none, or for the fallback)."""
+    for r in rules:
+        if r["title"] == title:
+            return r.get("tv", "")
+    return ""
 
 
 def kw_in(k, q):
@@ -186,7 +201,9 @@ def load_pc_voice(name):
 
 
 def pc_speak(text):
-    """Speak on the laptop: Piper if loaded, else espeak, else just the printed text."""
+    """Speak on the laptop: Piper if loaded, else espeak, else just the printed text. --voice none: print only."""
+    if _piper.get("mute"):
+        return
     voice, engine = _piper.get("voice"), _piper.get("engine")
     if voice is not None or engine is not None:
         import subprocess
@@ -381,12 +398,20 @@ WAKE = re.compile(r"\b(?:hey|hay|he|hi|hello|ok|okay)[ ,.!?-]*(?:q|queue|cue|kew
 WAKE_REPLY = {"ar": "أيوه، اتفضل.", "en": "Yes?"}
 
 
+GREETING_WAKE = re.compile(r"^\s*(hi|hello|هاي|اهلا|أهلا)", re.I)
+
+
 def wake_split(text):
-    """Was Q addressed? -> (True, the rest of the sentence) or (False, text). "يا كيو" alone gives (True, "")."""
+    """Was Q addressed? -> (True, the rest of the sentence) or (False, text). "يا كيو" alone gives (True, "").
+    A wake word that is itself a greeting ("هاي كيو", "hello Q") keeps the greeting, so Q greets back (and the
+    greeting's TV action runs) instead of only saying "yes?"."""
     m = WAKE.search(text)
     if not m:
         return False, text
     rest = (text[:m.start()] + " " + text[m.end():]).strip(" ,.!?-،؟")
+    g = GREETING_WAKE.match(m.group(0))
+    if not rest and g:
+        rest = g.group(1)
     return True, rest
 
 
@@ -401,9 +426,14 @@ def main():
     ap.add_argument("--ip", default=None, help="Yanshee IP when running from a PC")
     ap.add_argument("--voice", default=DEFAULT_VOICE,
                     help="laptop voice: name of a .onnx in ./voices (default %(default)s), 'espeak', "
-                         "or an Egyptian engine: voicetut[:Speaker] (local), munsit[:Voice] (cloud)")
+                         "or an Egyptian engine: voicetut[:Speaker] (local), munsit[:Voice] (cloud), or 'none' (print only, silent)")
     ap.add_argument("--mic", action="store_true", help="listen with the laptop microphone (offline Vosk)")
     ap.add_argument("--stt", default=DEFAULT_STT, help="Vosk model folder inside ./stt (default %(default)s)")
+    ap.add_argument("--tv", default="auto", help="TV for the brain's TV column: auto (default: find one on the network at start, "
+                    "keep looking if none), an IP, part of the TV's name, or off")
+    ap.add_argument("--tv-rescan", type=float, default=30, help="seconds between searches while no TV is found (default %(default)s)")
+    ap.add_argument("--tv-media", default=None, help="folder with the TV files (default: tv_media/ next to the --md file)")
+    ap.add_argument("--tv-port", type=int, default=8809, help="port this machine serves the TV files on (default %(default)s)")
     a = ap.parse_args()
 
     if not os.path.exists(a.md):
@@ -422,7 +452,10 @@ def main():
         probe(load_yanapi(a.ip))
         return
 
-    if yan is None:
+    if yan is None and a.voice == "none":
+        _piper["mute"] = True
+        print("Laptop voice: none (replies are only printed)")
+    elif yan is None:
         loaded = None if a.voice == "espeak" else load_pc_voice(a.voice)
         why = "chosen with --voice espeak" if a.voice == "espeak" else _piper.get("why", "")
         print("Laptop voice:", ("" if _piper.get("engine") else "Piper ") + loaded if loaded else "espeak (%s)" % why)
@@ -431,6 +464,16 @@ def main():
             print("Laptop microphone: Vosk", load_mic(a.stt))
         except RuntimeError as e:
             sys.exit("Cannot use --mic: %s" % e)
+
+    tv = None
+    if a.tv.lower() != "off":              # boot: look for a TV in the background; Q runs with or without one
+        from q_tv import TvCaster, parse_action
+        try:
+            tv = TvCaster(a.tv, a.tv_media or os.path.join(os.path.dirname(os.path.abspath(a.md)), "tv_media"),
+                          port=a.tv_port, rescan=a.tv_rescan).start()
+            print("TV layer: looking for %s on the network (in the background)" % ("a TV" if a.tv == "auto" else a.tv))
+        except OSError as e:
+            print("WARNING: TV layer off, cannot serve files on port %d: %s. Q keeps running without the TV." % (a.tv_port, e))
 
     speak("كيو جاهز. اسألني عن كيوب للاستشارات." if arabic else "Q is online. Ask me about Cube Consultants.", yan)
     while True:
@@ -454,6 +497,10 @@ def main():
         title, answer = best_answer(heard, rules, fallback)
         if a.text:
             print("[matched: %s]" % title)
+        if tv is not None:                 # the TV starts with the voice, not after it
+            note = tv.act(parse_action(tv_cell(title, rules)))
+            if note:
+                print(note)
         speak(answer, yan)
 
 
